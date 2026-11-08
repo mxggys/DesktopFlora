@@ -1,65 +1,51 @@
-# DesktopFlora
+🌿 DesktopFlora
 
-Schnee (oder Regen, Blüten, Laub) auf dem Windows-Desktop: fällt sanft, bleibt auf Fenstern liegen, rutscht beim Verschieben ab und lässt sich mit dem Mauszeiger wegfegen.
+DesktopFlora is a modern, open-source Windows application designed to enhance your desktop experience. It dynamically adapts your PC's visual theme and atmosphere based on the real-time weather outside.
 
-Basiert auf [Snowhush](https://github.com/mbezruchko/Snowhush) von Mykhailo Bezruchko (MIT-Lizenz) und erweitert dessen Windows-Version. Hieß vorher „Snowhush Plus“; eine vorhandene Installation wird beim Installieren ersetzt, die Einstellungen bleiben.
+✨ Features
 
-**Download:** [Neuestes Release](https://github.com/clavicular-alt/DesktopFlora/releases/latest) → `DesktopFlora-Setup.exe`. Installiert nur für den aktuellen Benutzer, ohne Adminrechte.
+🌧️ Dynamic Weather Integration: Automatically changes colors, effects, and visual elements to match current outdoor conditions (sun, rain, snow, storms, etc.).
 
-## Neu gegenüber dem Original
+🎨 Modern & Clean UI: A stylish, minimal interface crafted to fit seamlessly into Windows.
 
-| Funktion | Wo |
-|---|---|
-| **Eigenes Einstellungsfenster:** Links- oder Rechtsklick aufs Symbol öffnet ein schlichtes Schwarz-Weiß-Fenster mit Milchglas (Windows 11) und vier Reitern (Wetter, Aussehen, Verhalten, Mehr), hell oder dunkel wie Windows | Symbol im Infobereich |
-| **An / Aus:** Schalter oben im Fenster, Doppelklick aufs Symbol oder Tastenkürzel | – |
-| **Wetterarten:** Schnee, Regen (spritzt auf), Blüten (Tropfenform, wenden sich), Laub (echte Blattform mit Mittelrippe, dreht und wendet sich, bunt gesprenkelte Haufen), Sterne (vier Strahlen, funkeln). Was auf Fenstern liegt, fällt als das herunter, was es ist; nur Schnee schmilzt | Wetter |
-| **Jahreszeit:** Winter Schnee, Frühling Blüten, Sommer Sterne, Herbst Laub, passend zum Land aus den Windows-Regionseinstellungen (Südhalbkugel umgekehrt) | Wetter → Jahreszeit |
-| **Echtes Wetter vor Ort:** Regen oder Schnee wie draußen, inkl. Stärke und Wind; bei trockenem Wetter die Jahreszeit am Standort (Open-Meteo, Standort auf ~1 km gerundet, alle 30 min) | Wetter → Echtes Wetter vor Ort |
-| **Tastenkürzel frei wählbar:** An/Aus, Wegfegen, Nächstes Wetter; belegte Kürzel werden angezeigt | Mehr → Tastenkürzel |
-| **Ruhig im Hintergrund:** normale Priorität beim Zeichnen (kein Ruckeln), Effizienzmodus und Speicherfreigabe nur, wenn nichts zu sehen ist; standardmäßig 30 fps, 4 fps ohne Schnee, Sparmodus 20 fps, Fensterliste nur einmal pro Sekunde nachgeprüft | Verhalten → Bildrate |
-| **Größe, Wind, Deckkraft, Glitzern** | Aussehen |
-| **Beim Tippen ausblenden:** Schnee wird blass, solange getippt wird (ohne Tastatur- oder Maus-Hook: erkennt eine Reihe von Eingaben bei ruhender Maus) | Verhalten |
-| **Schneefreie Programme:** kein Schnee auf deren Fenstern; maximiert und im Vordergrund verschwindet der Schnee auf dem Bildschirm ganz | Mehr |
-| **Updates in der App:** lädt das neue Setup, prüft den SHA-256 gegen den Release (GitHub-Digest oder `SHA256SUMS.txt`), installiert still und startet neu. Ohne passende Prüfsumme wird nichts ausgeführt | Mehr → Nach Updates suchen |
-| **Wind von der Maus:** schnelle Bewegungen wirbeln die Flocken auf (Aus / Sanft / Stark) | Aussehen → Wind von der Maus |
-| **Farben:** natürlich oder bis zu 5 eigene Farben aus einer Farbleiste | Aussehen → Farbe |
-| **Zeitplan:** nur abends, tagsüber oder nachts | Verhalten → Zeitplan |
-| **Deutsch**, wenn Windows auf Deutsch läuft | – |
-| **Autostart:** startet ab sofort mit Windows (einmalig eingeschaltet, abschaltbar) | Verhalten → Mit Windows starten |
-| **Signierte Builds** möglich (siehe unten) und **winget**: wird bei jedem Release automatisch eingereicht, sobald das Secret `WINGET_TOKEN` gesetzt ist (siehe `packaging/winget`) | – |
+⚡ Resource Efficient: Low CPU and RAM footprint running smoothly in the background.
 
-Unverändert vom Original: Pause bei Vollbild-Apps, Präsentationen, Sperrbildschirm und ausgeschaltetem Display; ein Overlay pro Bildschirm; weniger Leistung im Akku- und Energiesparmodus; unsichtbar in Screenshots.
+🔓 100% Open Source: Completely free, transparent, and open for community contributions.
 
-## Bauen
+🚀 Installation
 
-GitHub Actions baut bei jedem Push auf `main` `DesktopFlora-Setup.exe` und veröffentlicht sie als Release `v<Version>` (Version aus `windows/Cargo.toml`) mit `SHA256SUMS.txt`. Für ein Update: Version erhöhen, pushen.
+Head over to the Releases section.
 
-Lokal unter Windows (Rust stable):
+Download the latest .exe setup file.
 
-```powershell
-cargo test --manifest-path core/Cargo.toml
-cargo build --release --manifest-path windows/Cargo.toml --bin DesktopFlora
-$env:SNOWHUSH_APP = "$PWD\windows\target\release\DesktopFlora.exe"
-cargo build --release --manifest-path windows/Cargo.toml --bin DesktopFlora-Setup --features setup
-```
+Run the installer and follow the on-screen instructions.
 
-Von macOS/Linux aus: `windows/build.sh` (braucht `cargo-xwin`).
+🛠️ Setup & Usage
 
-## Signieren (gegen Virenscanner-Fehlalarme)
+Launch DesktopFlora.
 
-Ohne Signatur melden einzelne Scanner und SmartScreen das Programm oft fälschlich. Für signierte Builds:
+Allow location access or manually enter your location to fetch local weather data.
 
-1. Code-Signing-Zertifikat besorgen (z. B. kostenlos für Open Source über [SignPath Foundation](https://signpath.org), oder kommerziell).
-2. Im Repo unter *Settings → Secrets and variables → Actions* anlegen:
-   - `SIGN_CERT_BASE64`: die `.pfx`-Datei als Base64 (`[Convert]::ToBase64String([IO.File]::ReadAllBytes("cert.pfx"))`)
-   - `SIGN_PASSWORD`: ihr Passwort
-3. Der Workflow signiert dann App und Installer automatisch.
+Choose your favorite theme preset or customize the weather visual effects to your liking.
 
-## Datenschutz
+💻 Development & Contributing
 
-- Netzwerk nur für: Update-Check (`api.github.com`, `github.com`, nur dieses Repo) und, wenn eingeschaltet, Wetter (`api.open-meteo.com`, mit auf 2 Nachkommastellen gerundeten Koordinaten).
-- Keine Telemetrie, kein Tastatur-Hook, keine Fenstertitel oder -inhalte.
+Contributions from the community are warmly welcomed! Feel free to add new weather animations, fix bugs, or suggest design enhancements.
 
-## Lizenz
+Clone the Repository
 
-MIT, siehe [LICENSE](LICENSE).
+git clone https://github.com/mxggys/DesktopFlora.git
+cd DesktopFlora
+
+
+Create a feature branch (git checkout -b feature/NewFeature).
+
+Commit your changes (git commit -m 'Add: New feature').
+
+Push to the branch (git push origin feature/NewFeature).
+
+Open a Pull Request.
+
+📄 License
+
+This project is licensed under the MIT License — see the LICENSE file for details.
