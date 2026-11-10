@@ -13,7 +13,7 @@ use windows::core::{HSTRING, PCWSTR, w};
 use snowhush_core::sha256;
 use snowhush_core::version::{asset_field, field, listed_digest, newer};
 
-pub const REPOSITORY: &str = "clavicular-alt/DesktopFlora";
+pub const REPOSITORY: &str = "mxggys/DesktopFlora";
 /// The repository holds other projects' releases too; Snowhush's tags start with this.
 const TAG_PREFIX: &str = "v";
 const INSTALLER: &str = "DesktopFlora-Setup.exe";

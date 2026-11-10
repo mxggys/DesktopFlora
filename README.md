@@ -38,7 +38,7 @@ Contributions from the community are warmly welcomed! Feel free to add new weath
 
 Clone the Repository
 
-git clone https://github.com/clavicular-alt/DesktopFlora.git
+git clone https://github.com/mxggys/DesktopFlora.git
 cd DesktopFlora
 
 

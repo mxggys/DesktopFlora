@@ -73,7 +73,7 @@ pub fn install(app: &[u8], version: &str) -> Result<PathBuf, String> {
     write_string(UNINSTALL, w!("Publisher"), "DesktopFlora (based on Snowhush by Mykhailo Bezruchko)");
     write_string(UNINSTALL, w!("DisplayIcon"), &exe.display().to_string());
     write_string(UNINSTALL, w!("InstallLocation"), &folder.display().to_string());
-    write_string(UNINSTALL, w!("URLInfoAbout"), "https://github.com/clavicular-alt/DesktopFlora");
+    write_string(UNINSTALL, w!("URLInfoAbout"), "https://github.com/mxggys/DesktopFlora");
     write_string(UNINSTALL, w!("UninstallString"), &format!("{quoted} --uninstall"));
     write_string(UNINSTALL, w!("QuietUninstallString"), &format!("{quoted} --uninstall --silent"));
     write_number(UNINSTALL, w!("NoModify"), 1);
