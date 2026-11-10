@@ -653,7 +653,7 @@ fn entries(sliders: bool) -> Option<Vec<Entry>> {
 
         // Rain and stars don't lie anywhere: nothing to keep, melt or clear.
         let heaps: Vec<Mode> = falling.iter().copied().filter(|&mode| mode != Mode::Rain && mode != Mode::Stars).collect();
-        let mut behavior = vec![Entry::header(tr("behavior"))];
+        let mut behavior = Vec::new();
         if !heaps.is_empty() {
             let melt = tr(if heaps.contains(&Mode::Snow) {
                 "melt.snow"
@@ -678,7 +678,6 @@ fn entries(sliders: bool) -> Option<Vec<Entry>> {
             colors.push(Entry::toggle(ID_COLOR + i as u32, &t(name), on, on || palette.len() < MAX_COLORS));
         }
         let look = vec![
-            Entry::header(&t("Look")),
             Entry::Submenu { label: t("Size"), entries: choices(ID_SIZE, &SIZES.map(|(name, _)| name), settings.size) },
             Entry::Submenu { label: t("Wind"), entries: choices(ID_WIND, &WINDS.map(|(name, _)| name), settings.wind) },
             Entry::Submenu { label: t("Color"), entries: colors },
@@ -691,24 +690,29 @@ fn entries(sliders: bool) -> Option<Vec<Entry>> {
         } else {
             1
         };
-        let mut options = behavior;
-        options.push(Entry::Separator);
-        options.extend(look);
-        options.extend([
-            Entry::Separator,
-            Entry::header(tr("display")),
+        // Settings stays short: one row per group, each folding out its own options.
+        let display = vec![
             Entry::toggle(ID_BEHIND, tr("behind"), settings.behind_windows, true),
             Entry::toggle(ID_FULL_SCREEN, tr("full_screen"), settings.over_full_screen, !settings.behind_windows),
             Entry::toggle(ID_TASKBAR, tr("taskbar"), settings.behind_taskbar, true),
             Entry::toggle(ID_SCREENSHOTS, tr("screenshots"), settings.show_in_screenshots, true),
-            Entry::Submenu { label: t("Frame Rate"), entries: choices(ID_RATE, &["Eco", "Normal", "Max"], rate) },
             Entry::Separator,
-            Entry::header(tr("general")),
+            Entry::header(&t("Frame Rate")),
+        ]
+        .into_iter()
+        .chain(choices(ID_RATE, &["Eco", "Normal", "Max"], rate))
+        .collect();
+        let options = vec![
             Entry::toggle(ID_LOGIN, tr("login"), login, true),
+            Entry::Separator,
+            Entry::Submenu { label: tr("behavior").to_string(), entries: behavior },
+            Entry::Submenu { label: t("Look"), entries: look },
+            Entry::Submenu { label: tr("display").to_string(), entries: display },
             Entry::Submenu { label: t("Snow-Free Programs"), entries: snow_free(app, last_app) },
             Entry::Submenu { label: t("Keyboard Shortcuts"), entries: shortcuts(&settings, &app.taken) },
+            Entry::Separator,
             Entry::item(ID_UPDATES, tr("updates"), false, true),
-        ]);
+        ];
 
         let amount = if intensity == 0 { tr("off").to_string() } else { format!("{intensity}%") };
         let mut entries = vec![Entry::toggle(ID_PAUSE, &t("Snow on"), !settings.paused, true), Entry::Separator];
