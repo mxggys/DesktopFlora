@@ -27,8 +27,8 @@ use windows::core::{PCWSTR, Result, w};
 use crate::halloween;
 use crate::log;
 use crate::outside;
-use crate::panel::{self, Action, Source, View};
-use crate::prefs::{self, MAX_COLORS, SCHEDULES, SHORTCUTS, SIZES, Settings, WINDS};
+use crate::menu::{self, Entry, Icon, Tile};
+use crate::prefs::{self, Hotkey, MAX_COLORS, SCHEDULES, SHORTCUTS, SIZES, Settings, WINDS};
 use crate::snow::{self, Command, Links};
 use crate::text::{fill as fill_in, t};
 use crate::tracker::{IGNORED, class_name, process_name};
@@ -184,12 +184,12 @@ struct App {
 
 thread_local! {
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
-    /// The program last in front other than DesktopFlora and the shell, which the panel offers to keep the snow off.
+    /// The program last in front other than DesktopFlora and the shell, which the menu offers to keep the snow off.
     static LAST_APP: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
-/// The tray icon and its panel, and the system events that pause the snow, on the main thread;
-/// the snow itself runs on its own thread so the panel and other modal loops never stall it.
+/// The tray icon and its menu, and the system events that pause the snow, on the main thread;
+/// the snow itself runs on its own thread so menus and other modal loops never stall it.
 pub fn run() -> Result<()> {
     unsafe {
         CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()?;
@@ -279,9 +279,9 @@ unsafe extern "system" fn procedure(window: HWND, message: u32, wparam: WPARAM, 
             let now = unsafe { GetTickCount() };
             let double_click = unsafe { GetDoubleClickTime() };
             if event == WM_CONTEXTMENU || event == NIN_KEYSELECT {
-                open_panel();
+                open_menu();
             } else if event == NIN_SELECT {
-                // A click may be the first of a double-click: the panel waits until it's clear it isn't.
+                // A click may be the first of a double-click: the menu waits until it's clear it isn't.
                 let after_double = APP.with_borrow(|app| app.as_ref().is_some_and(|app| now.wrapping_sub(app.double_clicked_at) < double_click));
                 if !after_double {
                     unsafe { SetTimer(Some(window), TIMER_CLICK, double_click, None) };
@@ -307,7 +307,7 @@ unsafe extern "system" fn procedure(window: HWND, message: u32, wparam: WPARAM, 
             unsafe {
                 let _ = KillTimer(Some(window), TIMER_CLICK);
             }
-            open_panel();
+            open_menu();
             LRESULT(0)
         }
         WM_TIMER if wparam.0 == TIMER_MINUTE => {
@@ -425,7 +425,7 @@ fn with_app(action: impl FnOnce(&App)) {
     });
 }
 
-/// What falls now and how much, in percent, and the breeze's share from outside: from the panel, the sky outside or the
+/// What falls now and how much, in percent, and the breeze's share from outside: from the menu, the sky outside or the
 /// season where the person is.
 fn effective(app: &App, month: u32) -> (u32, Vec<Mode>, f32) {
     let settings = &app.settings;
@@ -473,10 +473,9 @@ fn apply() {
         app.sent = Some(next);
     });
     refresh_icon();
-    panel::refresh();
 }
 
-/// On or off: for the panel's switch, the double-click and the shortcut.
+/// On or off: for the menu, the double-click and the shortcut.
 fn toggle() {
     APP.with_borrow_mut(|app| {
         let Some(app) = app else { return };
@@ -510,7 +509,7 @@ fn shortcut(index: i32) {
     }
 }
 
-/// Registers the shortcuts set in the panel, noting which another program already holds.
+/// Registers the shortcuts set in the menu, noting which another program already holds.
 fn register_hotkeys() {
     APP.with_borrow_mut(|app| {
         let Some(app) = app else { return };
@@ -524,7 +523,7 @@ fn register_hotkeys() {
                     let modifiers = HOT_KEY_MODIFIERS(hotkey.modifiers | MOD_NOREPEAT.0);
                     let taken = unsafe { RegisterHotKey(Some(app.window), id, modifiers, hotkey.key) }.is_err();
                     if taken {
-                        log!("shortcut {} is taken by another program", panel::describe(*hotkey));
+                        log!("shortcut {} is taken by another program", describe(*hotkey));
                     }
                     taken
                 }
@@ -534,12 +533,93 @@ fn register_hotkeys() {
     });
 }
 
-fn open_panel() {
-    panel::toggle(panel::Handlers { view: Box::new(view), act: Box::new(act) });
+/// Shows the tray menu at the pointer: Snowhush's drawn glass menu, or the system's when that can't be had.
+fn open_menu() {
+    let Some(window) = APP.with_borrow(|app| app.as_ref().map(|app| app.window)) else { return };
+    let mut cursor = windows::Win32::Foundation::POINT::default();
+    unsafe {
+        let _ = GetCursorPos(&mut cursor);
+    }
+    let (x, y) = (cursor.x, cursor.y);
+    let Some(current) = entries(true) else { return };
+    let mut toggle = |id: u32| {
+        choose(window, id);
+        entries(true).unwrap_or_default()
+    };
+    let native = || native_menu(window, x, y, &entries(false).unwrap_or_default());
+    let chosen = if menu::available() {
+        menu::track(x, y, current, light_taskbar(), &mut toggle).unwrap_or_else(|error| {
+            log!("menu failed, using the system's: {error}");
+            native()
+        })
+    } else {
+        native()
+    };
+    choose(window, chosen);
 }
 
-/// What the panel shows.
-fn view() -> Option<View> {
+const ID_SNOWFALL: u32 = 100;
+const INTENSITY_STEPS: u32 = 21;
+const INTENSITY_STOPS: [u32; 5] = [0, 25, 50, 75, 100];
+const ID_OPACITY: u32 = 400;
+const OPACITY_STEPS: u32 = 19;
+const OPACITY_STOPS: [u32; 5] = [100, 80, 60, 40, 20];
+const ID_ACCUMULATE: u32 = 200;
+const ID_MELT: u32 = 201;
+const ID_SCREENSHOTS: u32 = 202;
+const ID_LOGIN: u32 = 203;
+const ID_WINDOWS: u32 = 204;
+const ID_BEHIND: u32 = 205;
+const ID_UPDATES: u32 = 206;
+const ID_CLEAR: u32 = 207;
+const ID_HALLOWEEN: u32 = 208;
+const ID_TASKBAR: u32 = 209;
+const ID_FULL_SCREEN: u32 = 212;
+const ID_DEEP: u32 = 216;
+const ID_SPONSOR: u32 = 218;
+const ID_MIXED: u32 = 219;
+const ID_GROUND: u32 = 220;
+const ID_OPACITY_FOLD: u32 = 221;
+const ID_PAUSE: u32 = 222;
+const ID_TYPING: u32 = 223;
+const ID_SEASONAL: u32 = 224;
+const ID_OUTSIDE: u32 = 225;
+const ID_NATURAL: u32 = 226;
+const ID_EXCLUDE: u32 = 227;
+const ID_QUIT: u32 = 299;
+/// One per kind in `Mode::ALL`.
+const ID_MODE: u32 = 230;
+const ID_SIZE: u32 = 240;
+const ID_WIND: u32 = 250;
+const ID_SCHEDULE: u32 = 260;
+const ID_RATE: u32 = 270;
+const ID_COLOR: u32 = 280;
+/// Each program kept snow-free, from here up: choosing one lets the snow back on it.
+const ID_EXCLUDED: u32 = 500;
+/// The shortcuts' choices: `ID_SHORTCUT` + 10 × the shortcut + its choice in `SHORTCUT_CHOICES`.
+const ID_SHORTCUT: u32 = 600;
+/// Colours to pick for snow and stars, up to `MAX_COLORS` at once.
+const COLOR_PRESETS: [(&str, [f32; 3]); 8] = [
+    ("Ice Blue", [0.68, 0.84, 1.0]),
+    ("Mint", [0.66, 1.0, 0.82]),
+    ("Gold", [1.0, 0.84, 0.42]),
+    ("Pink", [1.0, 0.68, 0.84]),
+    ("Lavender", [0.8, 0.7, 1.0]),
+    ("Red", [1.0, 0.42, 0.4]),
+    ("Orange", [1.0, 0.64, 0.3]),
+    ("Silver", [0.82, 0.84, 0.88]),
+];
+/// The keys each shortcut can be put on: Ctrl+Alt, Ctrl+Shift or Win+Alt with its letter, or none.
+const SHORTCUT_CHOICES: [u32; 3] = [0x0002 | 0x0001, 0x0002 | 0x0004, 0x0008 | 0x0001];
+
+thread_local! {
+    /// Whether Accumulate and Opacity show what they fold, for as long as the app runs.
+    static ACCUMULATE_OPEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static OPACITY_OPEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// What the tray menu lists, with what is on or off: sliders in the drawn menu, submenus in the system's.
+fn entries(sliders: bool) -> Option<Vec<Entry>> {
     let login = prefs::opens_at_login();
     let last_app = LAST_APP.with_borrow(Clone::clone);
     APP.with_borrow(|app| {
@@ -547,72 +627,315 @@ fn view() -> Option<View> {
         let settings = app.settings;
         let now = unsafe { GetLocalTime() };
         let (intensity, falling, _) = effective(app, now.wMonth as u32);
-        let kind = falling.last().copied().unwrap_or(Mode::Snow);
-        let season_name = |mode: Mode| match mode {
-            Mode::Snow => t("Winter"),
-            Mode::Blossom => t("Spring"),
-            Mode::Stars => t("Summer"),
-            Mode::Autumn => t("Autumn"),
-            Mode::Rain => String::new(),
+        let chosen = !settings.local_weather && !settings.seasonal;
+        let picked = settings.modes();
+
+        // What falls: picked here, mixed, or following the season or the sky outside.
+        let kind = |mode: Mode| {
+            let id = ID_MODE + Mode::ALL.iter().position(|&m| m == mode).unwrap_or(0) as u32;
+            if settings.mixed && chosen {
+                Entry::toggle(id, mode_name(mode), picked.contains(&mode), true)
+            } else {
+                Entry::choice(id, mode_name(mode), chosen && settings.mode == mode)
+            }
         };
-        let name = |mode: Mode| {
-            tr(match mode {
-                Mode::Snow => "snow",
-                Mode::Autumn => "autumn",
-                Mode::Rain => "rain",
-                Mode::Blossom => "blossom",
-                Mode::Stars => "stars",
-            })
-            .to_string()
-        };
-        let status = if settings.local_weather {
-            let first = match app.outside {
-                Some((Conditions { falling: Some(_), .. }, _)) => fill_in(&t("Outside right now: {}"), &[&name(kind)]),
-                Some(_) => fill_in(&t("Dry outside: {} for the {}"), &[&name(kind), &season_name(kind)]),
-                None => t("Asking for the weather outside…"),
-            };
-            (first, t("Place: your location from Windows, rounded to about 1 km"))
-        } else if settings.seasonal {
-            let place = if app.home.0.is_empty() { t("your region") } else { app.home.0.clone() };
-            (format!("{} · {}", name(kind), season_name(kind)), fill_in(&t("Season in {}, from the region set in Windows"), &[&place]))
-        } else if !settings.scheduled(now.wHour as u32) {
-            (t("Outside the schedule right now"), String::new())
+        let mut modes = vec![Entry::toggle(ID_MIXED, tr("mixed"), settings.mixed && chosen, true), Entry::Separator];
+        modes.extend(Mode::ALL.iter().map(|&mode| kind(mode)));
+        modes.extend([
+            Entry::Separator,
+            Entry::choice(ID_SEASONAL, &t("Season"), settings.seasonal && !settings.local_weather),
+            Entry::choice(ID_OUTSIDE, &t("Outside"), settings.local_weather),
+        ]);
+        if let Some(status) = status(app, &falling) {
+            modes.push(Entry::header(&status));
+        }
+        modes.extend([Entry::Separator, Entry::item(ID_HALLOWEEN, tr("halloween"), halloween::wanted(settings.halloween), falling == [Mode::Snow])]);
+
+        // Rain and stars don't lie anywhere: nothing to keep, melt or clear.
+        let heaps: Vec<Mode> = falling.iter().copied().filter(|&mode| mode != Mode::Rain && mode != Mode::Stars).collect();
+        let mut behavior = vec![Entry::header(tr("behavior"))];
+        if !heaps.is_empty() {
+            let melt = tr(if heaps.contains(&Mode::Snow) {
+                "melt.snow"
+            } else if heaps == [Mode::Blossom] {
+                "melt.blossom"
+            } else {
+                "melt.autumn"
+            });
+            behavior.push(Entry::toggle(ID_MELT, melt, settings.melt, settings.accumulates()));
+        }
+        behavior.extend([
+            Entry::toggle(ID_DEEP, tr("deep"), settings.deep_interaction, settings.snow_on_windows),
+            Entry::toggle(ID_TYPING, &t("Fade While Typing"), settings.fade_while_typing, true),
+            Entry::Submenu { label: t("Schedule"), entries: choices(ID_SCHEDULE, &SCHEDULES.map(|(name, _, _)| name), settings.schedule) },
+        ]);
+
+        // How it looks: size, breeze and colours of one's own.
+        let mut colors = vec![Entry::choice(ID_NATURAL, &t("Natural"), !settings.custom_colors || settings.palette_len == 0), Entry::Separator];
+        let palette = &settings.palette[..settings.palette_len.min(MAX_COLORS)];
+        for (i, (name, rgb)) in COLOR_PRESETS.iter().enumerate() {
+            let on = settings.custom_colors && palette.contains(rgb);
+            colors.push(Entry::toggle(ID_COLOR + i as u32, &t(name), on, on || palette.len() < MAX_COLORS));
+        }
+        let look = vec![
+            Entry::header(&t("Look")),
+            Entry::Submenu { label: t("Size"), entries: choices(ID_SIZE, &SIZES.map(|(name, _)| name), settings.size) },
+            Entry::Submenu { label: t("Wind"), entries: choices(ID_WIND, &WINDS.map(|(name, _)| name), settings.wind) },
+            Entry::Submenu { label: t("Color"), entries: colors },
+        ];
+
+        let rate = if settings.max_performance {
+            2
+        } else if settings.eco {
+            0
         } else {
-            (String::new(), String::new())
+            1
         };
-        Some(View {
-            on: !settings.paused,
-            settings,
-            halloween_possible: falling == [Mode::Snow],
-            halloween_on: halloween::wanted(settings.halloween),
-            falling,
-            intensity,
-            status,
-            excluded: app.excluded.clone(),
-            last_app: last_app.filter(|last| !app.excluded.contains(last)),
-            login,
-            taken: app.taken,
-        })
+        let mut options = behavior;
+        options.push(Entry::Separator);
+        options.extend(look);
+        options.extend([
+            Entry::Separator,
+            Entry::header(tr("display")),
+            Entry::toggle(ID_BEHIND, tr("behind"), settings.behind_windows, true),
+            Entry::toggle(ID_FULL_SCREEN, tr("full_screen"), settings.over_full_screen, !settings.behind_windows),
+            Entry::toggle(ID_TASKBAR, tr("taskbar"), settings.behind_taskbar, true),
+            Entry::toggle(ID_SCREENSHOTS, tr("screenshots"), settings.show_in_screenshots, true),
+            Entry::Submenu { label: t("Frame Rate"), entries: choices(ID_RATE, &["Eco", "Normal", "Max"], rate) },
+            Entry::Separator,
+            Entry::header(tr("general")),
+            Entry::toggle(ID_LOGIN, tr("login"), login, true),
+            Entry::Submenu { label: t("Snow-Free Programs"), entries: snow_free(app, last_app) },
+            Entry::Submenu { label: t("Keyboard Shortcuts"), entries: shortcuts(&settings, &app.taken) },
+            Entry::item(ID_UPDATES, tr("updates"), false, true),
+        ]);
+
+        let amount = if intensity == 0 { tr("off").to_string() } else { format!("{intensity}%") };
+        let mut entries = vec![Entry::toggle(ID_PAUSE, &t("Snow on"), !settings.paused, true), Entry::Separator];
+        if sliders {
+            entries.extend([
+                Entry::header(tr("intensity")),
+                Entry::slider(ID_SNOWFALL, intensity.clamp(0, 100) / 5, INTENSITY_STEPS, &amount),
+                // Opacity is set once and left, so it folds away like Accumulate, its value on the row.
+                Entry::Disclosure {
+                    id: ID_OPACITY_FOLD,
+                    label: tr("opacity").to_string(),
+                    summary: format!("{}%", settings.opacity),
+                    icons: Vec::new(),
+                    open: OPACITY_OPEN.get(),
+                    keeps_summary: true,
+                },
+                Entry::folded_slider(ID_OPACITY, (settings.opacity.clamp(10, 100) - 10) / 5, OPACITY_STEPS, OPACITY_OPEN.get()),
+                Entry::Separator,
+            ]);
+        } else {
+            let intensities = INTENSITY_STOPS.iter().map(|&stop| Entry::choice(ID_SNOWFALL + stop / 5, &percent(stop), stop == intensity)).collect();
+            let opacities =
+                OPACITY_STOPS.iter().map(|&stop| Entry::choice(ID_OPACITY + (stop - 10) / 5, &format!("{stop}%"), stop == settings.opacity)).collect();
+            entries.extend([
+                Entry::Submenu { label: tr("intensity").to_string(), entries: intensities },
+                Entry::Submenu { label: tr("opacity").to_string(), entries: opacities },
+            ]);
+        }
+        entries.extend(accumulate(&settings, !heaps.is_empty(), sliders));
+        entries.push(Entry::Submenu { label: tr("mode").to_string(), entries: modes });
+        if !heaps.is_empty() {
+            entries.push(Entry::item(ID_CLEAR, text::kinds("clear", &heaps), false, true));
+        }
+        entries.extend([
+            Entry::Separator,
+            Entry::Submenu { label: tr("settings").to_string(), entries: options },
+            Entry::loved(ID_SPONSOR, tr("support")),
+            Entry::item(ID_QUIT, tr("quit"), false, true),
+        ]);
+        Some(entries)
     })
 }
 
-/// What a click in the panel does.
-fn act(action: Action) {
-    let window = APP.with_borrow(|app| app.as_ref().map(|app| app.window));
-    let Some(window) = window else { return };
-    match action {
-        Action::Toggle => return toggle(),
-        Action::Quit => return quit(window),
-        Action::Updates => return check_for_updates(window, true),
-        Action::Support => return update::open(SPONSORS),
-        Action::Clear => return with_app(|app| send(app, Command::ClearSnow(!prefs::animations_enabled()))),
-        Action::OpenAtLogin => {
+/// A submenu of options of which one is chosen.
+fn choices(first: u32, names: &[&str], chosen: usize) -> Vec<Entry> {
+    names.iter().enumerate().map(|(i, name)| Entry::choice(first + i as u32, &t(name), i == chosen)).collect()
+}
+
+/// Where snow settles: a row of icons Accumulate folds out in the drawn menu, a submenu of checkmarks in the system's.
+fn accumulate(settings: &Settings, heaps: bool, drawn: bool) -> Vec<Entry> {
+    let mut surfaces = vec![(ID_WINDOWS, Icon::Windows, tr("surface.windows"), settings.snow_on_windows)];
+    if heaps {
+        surfaces.push((ID_GROUND, Icon::Ground, tr("surface.ground"), settings.ground));
+    }
+    if !drawn {
+        let entries = surfaces.iter().map(|&(id, _, label, on)| Entry::item(id, label, on, true)).collect();
+        return vec![Entry::Submenu { label: tr("accumulate").to_string(), entries }];
+    }
+    let on: Vec<Icon> = surfaces.iter().filter(|surface| surface.3).map(|surface| surface.1).collect();
+    // Some on, the row shows their icons rather than their names, which would widen the menu.
+    let (summary, icons) = if on.len() == surfaces.len() {
+        (tr("all").to_string(), Vec::new())
+    } else if on.is_empty() {
+        (tr("off").to_string(), Vec::new())
+    } else {
+        (String::new(), on)
+    };
+    let open = ACCUMULATE_OPEN.get();
+    let tiles = surfaces.into_iter().map(|(id, icon, label, on)| Tile { id, icon, label: label.to_string(), on }).collect();
+    vec![
+        Entry::Disclosure { id: ID_ACCUMULATE, label: tr("accumulate").to_string(), summary, icons, open, keeps_summary: false },
+        Entry::Icons { tiles, shown: open },
+    ]
+}
+
+fn snow_free(app: &App, last_app: Option<String>) -> Vec<Entry> {
+    let mut entries = Vec::new();
+    match last_app.filter(|last| !app.excluded.contains(last)) {
+        Some(last) => entries.push(Entry::item(ID_EXCLUDE, &fill_in(&t("Keep Snow Off {}"), &[&last]), false, true)),
+        None => entries.push(Entry::item(0, &t("Switch to a program, then come back here"), false, false)),
+    }
+    if !app.excluded.is_empty() {
+        entries.push(Entry::Separator);
+        entries.extend(app.excluded.iter().enumerate().map(|(i, name)| Entry::item(ID_EXCLUDED + i as u32, name, true, true)));
+    }
+    entries
+}
+
+/// One submenu per shortcut: the keys it is on, chosen among a few, or none.
+fn shortcuts(settings: &Settings, taken: &[bool; 3]) -> Vec<Entry> {
+    SHORTCUTS
+        .iter()
+        .enumerate()
+        .map(|(i, (name, _, default))| {
+            let current = settings.hotkeys[i];
+            let mut entries: Vec<Entry> = SHORTCUT_CHOICES
+                .iter()
+                .enumerate()
+                .map(|(c, &modifiers)| {
+                    let hotkey = Hotkey { modifiers, key: default.key };
+                    Entry::choice(ID_SHORTCUT + 10 * i as u32 + c as u32, &describe(hotkey), current == Some(hotkey))
+                })
+                .collect();
+            entries.push(Entry::choice(ID_SHORTCUT + 10 * i as u32 + SHORTCUT_CHOICES.len() as u32, &t("None"), current.is_none()));
+            let label = match current {
+                Some(hotkey) if taken[i] => format!("{}: {}", t(name), fill_in(&t("{} (taken)"), &[&describe(hotkey)])),
+                Some(hotkey) => format!("{}: {}", t(name), describe(hotkey)),
+                None => t(name),
+            };
+            Entry::Submenu { label, entries }
+        })
+        .collect()
+}
+
+/// A line under Mode on where what falls comes from, while it follows the season or the sky.
+fn status(app: &App, falling: &[Mode]) -> Option<String> {
+    let kind = falling.last().copied().unwrap_or(Mode::Snow);
+    let season_name = match kind {
+        Mode::Snow => t("Winter"),
+        Mode::Blossom => t("Spring"),
+        Mode::Stars => t("Summer"),
+        Mode::Autumn => t("Autumn"),
+        Mode::Rain => String::new(),
+    };
+    if app.settings.local_weather {
+        Some(match app.outside {
+            Some((Conditions { falling: Some(_), .. }, _)) => fill_in(&t("Outside right now: {}"), &[mode_name(kind)]),
+            Some(_) => fill_in(&t("Dry outside: {} for the {}"), &[mode_name(kind), &season_name]),
+            None => t("Asking for the weather outside…"),
+        })
+    } else if app.settings.seasonal {
+        let place = if app.home.0.is_empty() { t("your region") } else { app.home.0.clone() };
+        Some(format!("{season_name} · {place}"))
+    } else {
+        None
+    }
+}
+
+fn mode_name(mode: Mode) -> &'static str {
+    tr(match mode {
+        Mode::Snow => "snow",
+        Mode::Autumn => "autumn",
+        Mode::Rain => "rain",
+        Mode::Blossom => "blossom",
+        Mode::Stars => "stars",
+    })
+}
+
+/// An intensity as its caption: a percentage, or Off.
+fn percent(intensity: u32) -> String {
+    if intensity == 0 { tr("off").to_string() } else { format!("{intensity}%") }
+}
+
+/// A shortcut as people read it, as "Ctrl+Alt+S".
+fn describe(hotkey: Hotkey) -> String {
+    let mut text = String::new();
+    for (flag, name) in [(0x0002, "Ctrl"), (0x0001, "Alt"), (0x0004, "Shift"), (0x0008, "Win")] {
+        if hotkey.modifiers & flag != 0 {
+            text.push_str(&t(name));
+            text.push('+');
+        }
+    }
+    text.push(char::from_u32(hotkey.key).unwrap_or('?'));
+    text
+}
+
+/// The system's own menu, for when the drawn one can't be shown.
+fn native_menu(window: HWND, x: i32, y: i32, entries: &[Entry]) -> u32 {
+    unsafe {
+        let Ok(menu) = CreatePopupMenu() else { return 0 };
+        append(menu, entries);
+        // A tray menu only closes on an outside click while its owner is in the foreground.
+        let _ = SetForegroundWindow(window);
+        let chosen = TrackPopupMenuEx(menu, (TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY).0, x, y, window, None).0 as u32;
+        let _ = PostMessageW(Some(window), WM_NULL, WPARAM(0), LPARAM(0));
+        let _ = DestroyMenu(menu);
+        chosen
+    }
+}
+
+unsafe fn append(menu: HMENU, entries: &[Entry]) {
+    let text = |label: &str| -> Vec<u16> { label.encode_utf16().chain([0]).collect() };
+    for entry in entries {
+        unsafe {
+            match entry {
+                Entry::Separator => {
+                    let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+                }
+                Entry::Header(label) => {
+                    let _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, PCWSTR(text(label).as_ptr()));
+                }
+                Entry::Item { id, label, checked, enabled, radio, .. } => {
+                    let flags = MF_STRING | if *checked { MF_CHECKED } else { MF_UNCHECKED } | if *enabled { MF_ENABLED } else { MF_GRAYED };
+                    let _ = AppendMenuW(menu, flags, *id as usize, PCWSTR(text(label).as_ptr()));
+                    if *radio && *checked {
+                        let _ = CheckMenuRadioItem(menu, *id, *id, *id, MF_BYCOMMAND.0);
+                    }
+                }
+                Entry::Submenu { label, entries } => {
+                    let Ok(submenu) = CreatePopupMenu() else { continue };
+                    append(submenu, entries);
+                    let _ = AppendMenuW(menu, MF_POPUP, submenu.0 as usize, PCWSTR(text(label).as_ptr()));
+                }
+                Entry::Slider { .. } | Entry::Disclosure { .. } | Entry::Icons { .. } => {}
+            }
+        }
+    }
+}
+
+/// What choosing an entry does.
+fn choose(window: HWND, chosen: u32) {
+    match chosen {
+        0 => return,
+        ID_QUIT => return quit(window),
+        ID_UPDATES => return check_for_updates(window, true),
+        ID_SPONSOR => return update::open(SPONSORS),
+        ID_PAUSE => return toggle(),
+        ID_CLEAR => return with_app(|app| send(app, Command::ClearSnow(!prefs::animations_enabled()))),
+        ID_ACCUMULATE => return ACCUMULATE_OPEN.set(!ACCUMULATE_OPEN.get()),
+        ID_OPACITY_FOLD => return OPACITY_OPEN.set(!OPACITY_OPEN.get()),
+        ID_LOGIN => {
             let on = !prefs::opens_at_login();
             let status = prefs::set_opens_at_login(on);
             log!("open at login {on}: {status:?}");
             return;
         }
-        Action::Exclude => {
+        ID_EXCLUDE => {
             if let Some(last) = LAST_APP.with_borrow(Clone::clone) {
                 set_excluded(|apps| {
                     if !apps.contains(&last) {
@@ -622,54 +945,39 @@ fn act(action: Action) {
             }
             return;
         }
-        Action::Include(i) => {
+        id if (ID_EXCLUDED..ID_SHORTCUT).contains(&id) => {
+            let i = (id - ID_EXCLUDED) as usize;
             return set_excluded(|apps| {
                 if i < apps.len() {
                     apps.remove(i);
                 }
             });
         }
-        Action::Source(Source::Outside) => {
+        id if (ID_SHORTCUT..ID_SHORTCUT + 10 * SHORTCUTS.len() as u32).contains(&id) => {
+            let (i, c) = (((id - ID_SHORTCUT) / 10) as usize, ((id - ID_SHORTCUT) % 10) as usize);
+            APP.with_borrow_mut(|app| {
+                let Some(app) = app else { return };
+                app.settings.hotkeys[i] = SHORTCUT_CHOICES.get(c).map(|&modifiers| Hotkey { modifiers, key: SHORTCUTS[i].2.key });
+                app.settings.save();
+            });
+            return register_hotkeys();
+        }
+        ID_OUTSIDE => {
             if !APP.with_borrow(|app| app.as_ref().is_some_and(|app| app.settings.local_weather)) {
                 set_local_weather(window, true);
                 check_weather(window, true);
             }
             return;
         }
-        Action::Rate(i) => {
+        id if (ID_RATE..ID_RATE + 3).contains(&id) => {
             APP.with_borrow_mut(|app| {
                 let Some(app) = app else { return };
-                app.settings.eco = i == 0;
-                app.settings.max_performance = i == 2;
+                app.settings.eco = id == ID_RATE;
+                app.settings.max_performance = id == ID_RATE + 2;
                 app.settings.save();
                 send(app, Command::Performance(app.settings.max_performance));
                 send(app, Command::RateCap(app.settings.rate_cap()));
             });
-            return;
-        }
-        Action::SuspendShortcuts(on) => {
-            if on {
-                with_app(|app| {
-                    for i in 0..SHORTCUTS.len() {
-                        unsafe {
-                            let _ = UnregisterHotKey(Some(app.window), HOTKEY_BASE + i as i32);
-                        }
-                    }
-                });
-            } else {
-                register_hotkeys();
-            }
-            return;
-        }
-        Action::SetHotkey(i, hotkey) => {
-            APP.with_borrow_mut(|app| {
-                let Some(app) = app else { return };
-                if i < SHORTCUTS.len() {
-                    app.settings.hotkeys[i] = hotkey;
-                    app.settings.save();
-                }
-            });
-            register_hotkeys();
             return;
         }
         _ => {}
@@ -677,108 +985,120 @@ fn act(action: Action) {
     let command = APP.with_borrow_mut(|app| {
         let app = app.as_mut()?;
         let settings = &mut app.settings;
-        let command = match action {
-            Action::Intensity(value) => {
-                settings.intensity = value.min(100);
+        let command = match chosen {
+            id if (ID_SNOWFALL..ID_SNOWFALL + INTENSITY_STEPS).contains(&id) => {
+                settings.intensity = 5 * (id - ID_SNOWFALL);
                 // Choosing how much by hand stops following the weather outside.
                 settings.local_weather = false;
                 app.outside = None;
                 None
             }
-            Action::Opacity(value) => {
-                settings.opacity = value.clamp(10, 100);
+            id if (ID_OPACITY..ID_OPACITY + OPACITY_STEPS).contains(&id) => {
+                settings.opacity = 10 + 5 * (id - ID_OPACITY);
                 Some(Command::FallingOpacity(settings.opacity as f32 / 100.0))
             }
-            Action::Pick(mode) => {
-                settings.pick(mode);
+            id if (ID_MODE..ID_MODE + Mode::ALL.len() as u32).contains(&id) => {
+                let mode = Mode::ALL[(id - ID_MODE) as usize];
+                // Picked from following the season or the sky, a kind falls alone.
+                if settings.seasonal || settings.local_weather {
+                    settings.mode = mode;
+                } else {
+                    settings.pick(mode);
+                }
                 settings.seasonal = false;
                 settings.local_weather = false;
                 settings.paused = false;
                 app.outside = None;
                 None
             }
-            Action::Mixed => {
+            ID_MIXED => {
+                settings.seasonal = false;
+                settings.local_weather = false;
+                app.outside = None;
                 settings.toggle_mixed();
                 None
             }
-            Action::Halloween => {
-                settings.halloween = settings.halloween.toggled(halloween::today());
-                None
-            }
-            Action::Source(source) => {
-                settings.seasonal = source == Source::Season;
+            ID_SEASONAL => {
+                settings.seasonal = true;
                 settings.local_weather = false;
                 settings.paused = false;
                 app.outside = None;
                 None
             }
-            Action::Size(i) => {
-                settings.size = i.min(SIZES.len() - 1);
+            ID_HALLOWEEN => {
+                settings.halloween = settings.halloween.toggled(halloween::today());
                 None
             }
-            Action::Wind(i) => {
-                settings.wind = i.min(WINDS.len() - 1);
+            id if (ID_SIZE..ID_SIZE + SIZES.len() as u32).contains(&id) => {
+                settings.size = (id - ID_SIZE) as usize;
                 None
             }
-            Action::CustomColors(on) => {
-                settings.custom_colors = on;
+            id if (ID_WIND..ID_WIND + WINDS.len() as u32).contains(&id) => {
+                settings.wind = (id - ID_WIND) as usize;
                 None
             }
-            Action::AddColor(rgb) => {
-                if settings.palette_len < MAX_COLORS {
+            id if (ID_SCHEDULE..ID_SCHEDULE + SCHEDULES.len() as u32).contains(&id) => {
+                settings.schedule = (id - ID_SCHEDULE) as usize;
+                None
+            }
+            ID_NATURAL => {
+                settings.custom_colors = false;
+                None
+            }
+            id if (ID_COLOR..ID_COLOR + COLOR_PRESETS.len() as u32).contains(&id) => {
+                let rgb = COLOR_PRESETS[(id - ID_COLOR) as usize].1;
+                let count = settings.palette_len.min(MAX_COLORS);
+                if !settings.custom_colors {
+                    // From natural colours, the first colour picked starts a fresh palette.
+                    settings.custom_colors = true;
+                    settings.palette_len = 0;
+                }
+                if let Some(i) = settings.palette[..settings.palette_len.min(count)].iter().position(|c| *c == rgb) {
+                    settings.palette.copy_within(i + 1..settings.palette_len, i);
+                    settings.palette_len -= 1;
+                } else if settings.palette_len < MAX_COLORS {
                     settings.palette[settings.palette_len] = rgb;
                     settings.palette_len += 1;
                 }
                 None
             }
-            Action::RemoveColor(i) => {
-                if i < settings.palette_len {
-                    settings.palette.copy_within(i + 1..settings.palette_len, i);
-                    settings.palette_len -= 1;
-                }
-                None
-            }
-            Action::Schedule(i) => {
-                settings.schedule = i.min(SCHEDULES.len() - 1);
-                None
-            }
-            Action::Ground => {
+            ID_GROUND => {
                 settings.ground = !settings.ground;
                 Some(Command::Ground(settings.ground))
             }
-            Action::SnowOnWindows => {
+            ID_WINDOWS => {
                 settings.snow_on_windows = !settings.snow_on_windows;
                 Some(Command::SnowOnWindows(settings.snow_on_windows))
             }
-            Action::Melt => {
+            ID_MELT => {
                 settings.melt = !settings.melt;
                 Some(Command::Melt(settings.melt))
             }
-            Action::DeepInteraction => {
+            ID_DEEP => {
                 settings.deep_interaction = !settings.deep_interaction;
                 Some(Command::DeepInteraction(settings.deep_interaction))
             }
-            Action::BehindWindows => {
+            ID_BEHIND => {
                 settings.behind_windows = !settings.behind_windows;
                 Some(Command::BehindWindows(settings.behind_windows))
             }
-            Action::OverFullScreen => {
+            ID_FULL_SCREEN => {
                 settings.over_full_screen = !settings.over_full_screen;
                 Some(Command::OverFullScreen(settings.over_full_screen))
             }
-            Action::BehindTaskbar => {
+            ID_TASKBAR => {
                 settings.behind_taskbar = !settings.behind_taskbar;
                 Some(Command::BehindTaskbar(settings.behind_taskbar))
             }
-            Action::Screenshots => {
+            ID_SCREENSHOTS => {
                 settings.show_in_screenshots = !settings.show_in_screenshots;
                 Some(Command::ShowInScreenshots(settings.show_in_screenshots))
             }
-            Action::FadeWhileTyping => {
+            ID_TYPING => {
                 settings.fade_while_typing = !settings.fade_while_typing;
                 Some(Command::FadeWhileTyping(settings.fade_while_typing))
             }
-            _ => None,
+            _ => return Some(None),
         };
         app.settings.save();
         Some(command)
@@ -798,7 +1118,7 @@ fn act(action: Action) {
 /// Remembers the program that came to the front, unless it is DesktopFlora or part of the shell.
 unsafe extern "system" fn on_foreground(_: HWINEVENTHOOK, _: u32, window: HWND, _: i32, _: i32, _: u32, _: u32) {
     let class = class_name(window);
-    if IGNORED.contains(&class.as_str()) || class == "DesktopFloraPanel" {
+    if IGNORED.contains(&class.as_str()) || class == "DesktopFloraMenu" {
         return;
     }
     let mut process = 0;
@@ -983,7 +1303,6 @@ fn notify(window: HWND, title: &str, text: &str) {
 }
 
 fn quit(window: HWND) {
-    panel::close();
     remove_tray_icon(window);
     for i in 0..SHORTCUTS.len() {
         unsafe {

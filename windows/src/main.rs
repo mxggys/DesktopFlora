@@ -6,7 +6,7 @@ mod halloween;
 mod light;
 mod log;
 mod outside;
-mod panel;
+mod menu;
 mod prefs;
 mod render;
 mod screen;

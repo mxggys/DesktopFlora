@@ -10,7 +10,7 @@ It is based on [Snowhush](https://github.com/mbezruchko/Snowhush) by Mykhailo Be
 
 ❄️ Five kinds of weather: snow that piles up and slides off windows, autumn leaves drawn from photos, rain running down your windows, cherry blossoms and twinkling stars. Mix two, or turn on Halloween.
 
-🎨 Modern & Clean UI: A black-and-white settings panel on frosted glass, opened from the tray icon, with your own colours, keyboard shortcuts, a schedule and snow-free programs.
+🎨 Modern & Clean UI: Snowhush's tray menu on frosted glass, with sliders for intensity and opacity, plus your own colours, keyboard shortcuts, a schedule and snow-free programs.
 
 ⚡ Resource Efficient: Low CPU and RAM footprint running smoothly in the background.
 
