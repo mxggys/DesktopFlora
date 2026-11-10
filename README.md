@@ -10,7 +10,9 @@ It is based on [Snowhush](https://github.com/mbezruchko/Snowhush) by Mykhailo Be
 
 ❄️ Five kinds of weather: snow that piles up and slides off windows, autumn leaves drawn from photos, rain running down your windows, cherry blossoms and twinkling stars. Mix two, or turn on Halloween.
 
-🎨 Modern & Clean UI: Snowhush's tray menu on frosted glass, with sliders for intensity and opacity, plus your own colours, keyboard shortcuts, a schedule and snow-free programs.
+🎨 Modern & Clean UI: Snowhush's tray menu on frosted glass for the quick things, and a Settings window laid out like Windows 11's own, with big cards for every option: weather, look, behaviour, display, snow-free programs and keyboard shortcuts.
+
+🔄 Updates itself: new versions install on their own, checked against the release's checksum.
 
 ⚡ Resource Efficient: Low CPU and RAM footprint running smoothly in the background.
 

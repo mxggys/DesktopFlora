@@ -293,6 +293,13 @@ pub fn open_at_login_by_default() {
     }
 }
 
+/// The version that ran before this one, once, if it differs: for saying an update has happened.
+pub fn take_new_version(current: &str) -> Option<String> {
+    let before = read_text(w!("lastVersion"));
+    write_text(w!("lastVersion"), current);
+    before.filter(|before| before != current && !before.is_empty())
+}
+
 /// Programs whose windows get no snow, by executable name in lowercase, such as `code.exe`.
 pub fn excluded_apps() -> Vec<String> {
     read_text(w!("excludedApps"))

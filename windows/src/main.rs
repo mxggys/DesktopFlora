@@ -10,6 +10,7 @@ mod menu;
 mod prefs;
 mod render;
 mod screen;
+mod settings;
 mod snow;
 mod text;
 mod tracker;
