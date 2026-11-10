@@ -2,9 +2,11 @@
 //! The Mac app has its own in Swift, and the site its own in JavaScript.
 
 pub mod geometry;
+pub mod halloween;
 pub mod layer;
 pub mod sha256;
 pub mod simulation;
+pub mod text;
 pub mod version;
 pub mod weather;
 

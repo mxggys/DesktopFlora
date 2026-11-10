@@ -2,6 +2,7 @@
 
 mod app;
 mod desktop;
+mod halloween;
 mod light;
 mod log;
 mod outside;
@@ -33,6 +34,7 @@ fn main() {
         }
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
+    snowhush::language::choose();
     log::start();
     log!("DesktopFlora {}", env!("CARGO_PKG_VERSION"));
     if let Err(error) = app::run() {

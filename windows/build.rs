@@ -75,7 +75,7 @@ fn version_info(version: &str, description: &str, filename: &str) -> Vec<u8> {
         ("FileDescription", description),
         ("FileVersion", version),
         ("InternalName", "DesktopFlora"),
-        ("LegalCopyright", "© 2026 Mykhailo Bezruchko and DesktopFlora contributors, MIT License"),
+        ("LegalCopyright", "© 2026 Mykhailo Bezruchko and DesktopFlora contributors, PolyForm Noncommercial 1.0.0"),
         ("OriginalFilename", filename),
         ("ProductName", "DesktopFlora"),
         ("ProductVersion", version),

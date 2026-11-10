@@ -30,25 +30,26 @@ use windows::Win32::System::SystemInformation::GetTickCount;
 use windows::Win32::UI::Controls::MARGINS;
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyNameTextW, GetKeyState, MAPVK_VK_TO_VSC, MapVirtualKeyW, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent, VK_BACK, VK_CONTROL, VK_DELETE,
-    VK_ESCAPE, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+    GetKeyNameTextW, GetKeyState, MAPVK_VK_TO_VSC, MapVirtualKeyW, ReleaseCapture, SetCapture, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent, VK_BACK,
+    VK_CONTROL, VK_DELETE, VK_ESCAPE, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::{BOOL, PCWSTR, Result, w};
 use windows_numerics::Vector2;
 
-use snowhush_core::simulation::{MAX_COLORS, Snowfall, Weather};
+use snowhush_core::simulation::Mode;
+use snowhush_core::text::{self as words, tr};
 
 use crate::log;
-use crate::prefs::{FRAME_CAPS, GLITTERS, Hotkey, MOUSE_WINDS, OPACITIES, SCHEDULES, SHORTCUTS, SIZES, Settings, WINDS};
+use crate::prefs::{Hotkey, MAX_COLORS, SCHEDULES, SHORTCUTS, SIZES, Settings, WINDS};
 use crate::text::{fill, t};
 use crate::tracker::windows_build;
 
 const CLASS: PCWSTR = w!("DesktopFloraPanel");
-const WIDTH: f32 = 380.0;
-const HEIGHT: f32 = 600.0;
+const WIDTH: f32 = 390.0;
+const HEIGHT: f32 = 610.0;
 const PAD: f32 = 20.0;
-const TABS: [&str; 4] = ["Weather", "Look", "Behavior", "More"];
+const TABS: [&str; 5] = ["Weather", "Look", "Behavior", "Display", "More"];
 const WM_MOUSELEAVE: u32 = 0x02A3;
 const MOD_ALT: u32 = 0x0001;
 const MOD_CONTROL: u32 = 0x0002;
@@ -61,24 +62,31 @@ const ACRYLIC_BUILD: u32 = 22621;
 #[derive(Clone, Debug)]
 pub enum Action {
     Toggle,
-    Snowfall(Snowfall),
-    Weather(Weather),
+    /// How much falls, in percent, in steps of 5.
+    Intensity(u32),
+    /// How opaque what falls is drawn, in percent, 10 to 100.
+    Opacity(u32),
+    /// Picks what falls; mixed, it joins the other kind picked.
+    Pick(Mode),
+    Mixed,
+    Halloween,
     /// Where the weather comes from: chosen here, the season, or the sky outside.
     Source(Source),
     Size(usize),
     Wind(usize),
-    MouseWind(usize),
     CustomColors(bool),
     AddColor([f32; 3]),
     RemoveColor(usize),
-    Glitter(usize),
-    Opacity(usize),
-    FrameCap(usize),
     Schedule(usize),
-    Accumulate,
-    Melt,
+    /// Eco, normal, or max performance.
+    Rate(usize),
+    Ground,
     SnowOnWindows,
+    Melt,
+    DeepInteraction,
     BehindWindows,
+    OverFullScreen,
+    BehindTaskbar,
     Screenshots,
     FadeWhileTyping,
     OpenAtLogin,
@@ -91,6 +99,7 @@ pub enum Action {
     /// While a shortcut is being typed, the current ones let go of their keys, so typing one doesn't set it off.
     SuspendShortcuts(bool),
     Updates,
+    Support,
     Quit,
 }
 
@@ -105,11 +114,14 @@ pub enum Source {
 pub struct View {
     pub on: bool,
     pub settings: Settings,
-    /// What falls now and how much, whichever way it was chosen.
-    pub weather: Weather,
-    pub amount: Snowfall,
+    /// What falls now, whichever way it was chosen, and how much, in percent.
+    pub falling: Vec<Mode>,
+    pub intensity: u32,
     /// Two lines on where the weather comes from, as the season, the sky outside and the place.
     pub status: (String, String),
+    /// Whether Halloween can be had now: only over snow alone.
+    pub halloween_possible: bool,
+    pub halloween_on: bool,
     pub excluded: Vec<String>,
     pub last_app: Option<String>,
     pub login: bool,
@@ -122,12 +134,44 @@ pub struct Handlers {
     pub act: Box<dyn Fn(Action)>,
 }
 
-/// What a panel does with a click: the app's actions, and its own tabs and shortcut fields.
+/// A slider's value range, in percent and steps of 5.
+#[derive(Clone, Copy, Debug)]
+enum Slider {
+    Intensity,
+    Opacity,
+}
+
+impl Slider {
+    fn range(self) -> (u32, u32) {
+        match self {
+            Slider::Intensity => (0, 100),
+            Slider::Opacity => (10, 100),
+        }
+    }
+
+    fn action(self, value: u32) -> Action {
+        match self {
+            Slider::Intensity => Action::Intensity(value),
+            Slider::Opacity => Action::Opacity(value),
+        }
+    }
+
+    /// The value at `x` along `track`.
+    fn at(self, track: &D2D_RECT_F, x: f32) -> u32 {
+        let (low, high) = self.range();
+        let t = ((x - track.left) / (track.right - track.left)).clamp(0.0, 1.0);
+        let value = low as f32 + t * (high - low) as f32;
+        ((value / 5.0).round() as u32 * 5).clamp(low, high)
+    }
+}
+
+/// What a panel does with a click: the app's actions, and its own tabs, sliders and shortcut fields.
 #[derive(Clone, Debug)]
 enum Hit {
     App(Action),
     Tab(usize),
     Capture(usize),
+    Slider(Slider),
 }
 
 struct Panel {
@@ -139,6 +183,8 @@ struct Panel {
     hits: Vec<(D2D_RECT_F, Hit)>,
     /// The shortcut waiting for its new keys.
     capturing: Option<usize>,
+    /// The slider being dragged, its track, and the value last sent.
+    dragging: Option<(Slider, D2D_RECT_F, u32)>,
     handlers: Handlers,
     d2d: ID2D1Factory,
     text: IDWriteFactory,
@@ -233,6 +279,7 @@ fn open(handlers: Handlers) -> Result<()> {
             hover: None,
             hits: Vec::new(),
             capturing: None,
+            dragging: None,
             handlers,
             d2d: D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)?,
             text: DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?,
@@ -303,6 +350,20 @@ unsafe extern "system" fn procedure(window: HWND, message: u32, wparam: WPARAM, 
         WM_ERASEBKGND => LRESULT(1),
         WM_MOUSEMOVE => {
             let point = point(lparam);
+            // Dragging a slider, its value follows the pointer.
+            let dragged = PANEL.with_borrow_mut(|panel| {
+                let panel = panel.as_mut()?;
+                let (slider, track, last) = panel.dragging?;
+                let value = slider.at(&track, point.x as f32 / panel.scale);
+                (value != last).then(|| {
+                    panel.dragging = Some((slider, track, value));
+                    slider.action(value)
+                })
+            });
+            if let Some(action) = dragged {
+                click(Hit::App(action));
+                return LRESULT(0);
+            }
             let changed = PANEL.with_borrow_mut(|panel| {
                 let panel = panel.as_mut()?;
                 let at = (point.x as f32 / panel.scale, point.y as f32 / panel.scale);
@@ -329,8 +390,34 @@ unsafe extern "system" fn procedure(window: HWND, message: u32, wparam: WPARAM, 
             paint();
             LRESULT(0)
         }
+        WM_LBUTTONDOWN => {
+            let point = point(lparam);
+            let pressed = PANEL.with_borrow_mut(|panel| {
+                let panel = panel.as_mut()?;
+                let at = (point.x as f32 / panel.scale, point.y as f32 / panel.scale);
+                let (track, slider) = panel.hits.iter().find_map(|(rect, hit)| match hit {
+                    Hit::Slider(slider) if contains(rect, at) => Some((*rect, *slider)),
+                    _ => None,
+                })?;
+                let value = slider.at(&track, at.0);
+                panel.dragging = Some((slider, track, value));
+                Some(slider.action(value))
+            });
+            if let Some(action) = pressed {
+                unsafe { SetCapture(window) };
+                click(Hit::App(action));
+            }
+            LRESULT(0)
+        }
         WM_LBUTTONUP => {
             let point = point(lparam);
+            let was_dragging = PANEL.with_borrow_mut(|panel| panel.as_mut().and_then(|panel| panel.dragging.take()).is_some());
+            if was_dragging {
+                unsafe {
+                    let _ = ReleaseCapture();
+                }
+                return LRESULT(0);
+            }
             let hit = PANEL.with_borrow(|panel| {
                 let panel = panel.as_ref()?;
                 let at = (point.x as f32 / panel.scale, point.y as f32 / panel.scale);
@@ -365,6 +452,7 @@ fn contains(rect: &D2D_RECT_F, (x, y): (f32, f32)) -> bool {
 
 fn click(hit: Hit) {
     match hit {
+        Hit::Slider(_) => {}
         Hit::Tab(tab) => {
             let was_capturing = PANEL.with_borrow_mut(|panel| {
                 let panel = panel.as_mut()?;
@@ -590,6 +678,34 @@ struct Painter<'a> {
     hover: Option<usize>,
 }
 
+/// What falls, in the order the tiles show them, with their signs.
+const KINDS: [(Mode, &str); 5] = [(Mode::Snow, "❄"), (Mode::Autumn, "❦"), (Mode::Rain, "☂"), (Mode::Blossom, "✿"), (Mode::Stars, "✦")];
+
+fn sign_of(mode: Mode) -> &'static str {
+    KINDS.iter().find(|(kind, _)| *kind == mode).map_or("❄", |(_, sign)| sign)
+}
+
+/// A kind's name in the person's language.
+fn name_of(mode: Mode) -> String {
+    tr(match mode {
+        Mode::Snow => "snow",
+        Mode::Autumn => "autumn",
+        Mode::Rain => "rain",
+        Mode::Blossom => "blossom",
+        Mode::Stars => "stars",
+    })
+    .to_string()
+}
+
+/// A short name for a tile: "Autumn Leaves" and "Cherry Blossom" don't fit, so a tile says just the thing.
+fn tile_name(mode: Mode) -> String {
+    match mode {
+        Mode::Autumn => t("Leaves"),
+        Mode::Blossom => t("Blossoms"),
+        _ => name_of(mode),
+    }
+}
+
 impl Painter<'_> {
     fn panel(&mut self, view: &View, tab: usize, capturing: Option<usize>) -> Result<()> {
         let frame = D2D_RECT_F { left: 0.0, top: 0.0, right: WIDTH, bottom: HEIGHT };
@@ -599,7 +715,13 @@ impl Painter<'_> {
 
         // Header: name, what falls now, and the switch.
         self.label("DesktopFlora", D2D_RECT_F { left, top: 16.0, right, bottom: 40.0 }, 17.0, true, self.colors.ink, 1.0, LEADING)?;
-        let falling = if view.on { fill(&t("{} · {}"), &[&t(view.weather.title()), &t(view.amount.title())]) } else { t("Paused") };
+        let falling = if view.on {
+            let names: Vec<String> = view.falling.iter().map(|&mode| name_of(mode)).collect();
+            let amount = if view.intensity == 0 { tr("off").to_string() } else { format!("{}%", view.intensity) };
+            format!("{} · {}", names.join(" + "), amount)
+        } else {
+            t("Paused")
+        };
         self.label(&falling, D2D_RECT_F { left, top: 40.0, right: right - 60.0, bottom: 58.0 }, 12.0, false, self.colors.ink, self.colors.muted, LEADING)?;
         self.switch(D2D_RECT_F { left: right - 46.0, top: 24.0, right, bottom: 48.0 }, view.on, true, Hit::App(Action::Toggle))?;
 
@@ -615,7 +737,7 @@ impl Painter<'_> {
                 self.fill(rect, 7.0, self.colors.ink, self.colors.raised)?;
             }
             self.hit(rect, Hit::Tab(i), 7.0)?;
-            self.label(&t(name), rect, 12.0, chosen, self.colors.ink, if chosen { 1.0 } else { self.colors.muted }, CENTER)?;
+            self.label(&t(name), rect, 11.5, chosen, self.colors.ink, if chosen { 1.0 } else { self.colors.muted }, CENTER)?;
         }
 
         let mut y = top + 48.0;
@@ -623,6 +745,7 @@ impl Painter<'_> {
             0 => self.weather_tab(view, left, right, &mut y)?,
             1 => self.look_tab(view, left, right, &mut y)?,
             2 => self.behavior_tab(view, left, right, &mut y)?,
+            3 => self.display_tab(view, left, right, &mut y)?,
             _ => self.more_tab(view, left, right, &mut y, capturing)?,
         }
 
@@ -633,7 +756,7 @@ impl Painter<'_> {
         self.label(&version, D2D_RECT_F { left, top: bottom - 26.0, right: right - 100.0, bottom }, 11.5, false, self.colors.ink, 0.45, LEADING)?;
         let quit = D2D_RECT_F { left: right - 90.0, top: bottom - 28.0, right, bottom };
         self.hit(quit, Hit::App(Action::Quit), 6.0)?;
-        self.label(&t("Quit"), quit, 12.0, false, self.colors.ink, self.colors.muted, TRAILING)
+        self.label(tr("quit"), quit, 12.0, false, self.colors.ink, self.colors.muted, TRAILING)
     }
 
     fn weather_tab(&mut self, view: &View, left: f32, right: f32, y: &mut f32) -> Result<()> {
@@ -651,39 +774,47 @@ impl Painter<'_> {
         self.segmented("What falls", &names, chosen, |i| Action::Source(sources[i]), left, right, y)?;
 
         if source == Source::Chosen {
-            // One tile per weather, with its sign above its name.
-            let count = Weather::ALL.len() as f32;
+            // One tile per kind, with its sign above its name; mixed, two can be picked.
+            let count = KINDS.len() as f32;
             let width = (right - left - (count - 1.0) * 8.0) / count;
-            for (i, weather) in Weather::ALL.iter().enumerate() {
+            let picked = settings.modes();
+            for (i, (mode, sign)) in KINDS.iter().enumerate() {
                 let x = left + i as f32 * (width + 8.0);
-                let rect = D2D_RECT_F { left: x, top: *y, right: x + width, bottom: *y + 66.0 };
-                let selected = settings.weather == *weather;
+                let rect = D2D_RECT_F { left: x, top: *y, right: x + width, bottom: *y + 64.0 };
+                let selected = picked.contains(mode);
                 self.fill(rect, 10.0, self.colors.ink, if selected { 1.0 } else { self.colors.wash })?;
-                self.hit(rect, Hit::App(Action::Weather(*weather)), 10.0)?;
+                self.hit(rect, Hit::App(Action::Pick(*mode)), 10.0)?;
                 let ink = if selected { self.colors.on_accent } else { self.colors.ink };
-                let sign = D2D_RECT_F { top: rect.top + 8.0, bottom: rect.top + 38.0, ..rect };
-                self.glyph(sign_of(*weather), sign, 20.0, ink)?;
-                let name = D2D_RECT_F { top: rect.top + 40.0, bottom: rect.bottom - 6.0, ..rect };
-                self.label(&t(weather.title()), name, 11.0, selected, ink, 1.0, CENTER)?;
+                self.glyph(sign, D2D_RECT_F { top: rect.top + 8.0, bottom: rect.top + 38.0, ..rect }, 20.0, ink)?;
+                self.label(&tile_name(*mode), D2D_RECT_F { top: rect.top + 40.0, bottom: rect.bottom - 6.0, ..rect }, 10.5, selected, ink, 1.0, CENTER)?;
             }
-            *y += 78.0;
+            *y += 72.0;
+            let half = (right - left - 8.0) / 2.0;
+            self.chip(D2D_RECT_F { left, top: *y, right: left + half, bottom: *y + 30.0 }, &t("Mix two"), settings.mixed, true, Hit::App(Action::Mixed))?;
+            let halloween = D2D_RECT_F { left: right - half, top: *y, right, bottom: *y + 30.0 };
+            self.chip(halloween, tr("halloween"), view.halloween_on, view.halloween_possible, Hit::App(Action::Halloween))?;
+            *y += 42.0;
         } else {
             // Where it comes from: what falls, the season or sky, and the place.
             let card = D2D_RECT_F { left, top: *y, right, bottom: *y + 66.0 };
             self.fill(card, 10.0, self.colors.ink, self.colors.wash)?;
-            self.glyph(sign_of(view.weather), D2D_RECT_F { left: left + 8.0, right: left + 50.0, ..card }, 22.0, self.colors.ink)?;
+            let sign = view.falling.first().copied().map_or("❄", sign_of);
+            self.glyph(sign, D2D_RECT_F { left: left + 8.0, right: left + 50.0, ..card }, 22.0, self.colors.ink)?;
             let text = D2D_RECT_F { left: left + 56.0, right: right - 12.0, ..card };
             self.label(&view.status.0, D2D_RECT_F { top: card.top + 12.0, bottom: card.top + 34.0, ..text }, 13.0, true, self.colors.ink, 1.0, LEADING)?;
-            self.label(&view.status.1, D2D_RECT_F { top: card.top + 34.0, bottom: card.top + 54.0, ..text }, 11.5, false, self.colors.ink, self.colors.muted, LEADING)?;
+            self.label(&view.status.1, D2D_RECT_F { top: card.top + 34.0, bottom: card.top + 54.0, ..text }, 11.0, false, self.colors.ink, self.colors.muted, LEADING)?;
             *y += 78.0;
         }
 
-        let amounts = [Snowfall::Light, Snowfall::Steady, Snowfall::Heavy, Snowfall::Variable];
-        let names: Vec<String> = amounts.iter().map(|amount| t(amount.title())).collect();
-        let chosen = (source != Source::Outside).then(|| amounts.iter().position(|&a| a == settings.snowfall)).flatten();
-        self.segmented("Amount", &names, chosen, |i| Action::Snowfall(amounts[i]), left, right, y)?;
-        *y += 4.0;
-        self.button(D2D_RECT_F { left, top: *y, right, bottom: *y + 36.0 }, &t("Clear Snow"), Hit::App(Action::Clear))
+        let amount = if view.intensity == 0 { tr("off").to_string() } else { format!("{}%", view.intensity) };
+        self.slider(tr("intensity"), &amount, view.intensity, Slider::Intensity, source != Source::Outside, left, right, y)?;
+        // Rain and stars don't lie anywhere: nothing to clear.
+        let heaps: Vec<Mode> = view.falling.iter().copied().filter(|&mode| mode != Mode::Rain && mode != Mode::Stars).collect();
+        if !heaps.is_empty() {
+            *y += 4.0;
+            self.button(D2D_RECT_F { left, top: *y, right, bottom: *y + 36.0 }, words::kinds("clear", &heaps), Hit::App(Action::Clear))?;
+        }
+        Ok(())
     }
 
     fn look_tab(&mut self, view: &View, left: f32, right: f32, y: &mut f32) -> Result<()> {
@@ -691,13 +822,13 @@ impl Painter<'_> {
         let names = |options: &[(&str, f32)]| options.iter().map(|(name, _)| t(name)).collect::<Vec<_>>();
         self.segmented("Size", &names(&SIZES), Some(settings.size), Action::Size, left, right, y)?;
         self.segmented("Wind", &names(&WINDS), Some(settings.wind), Action::Wind, left, right, y)?;
-        self.segmented("Mouse Wind", &names(&MOUSE_WINDS), Some(settings.mouse_wind), Action::MouseWind, left, right, y)?;
-        self.segmented("Opacity", &names(&OPACITIES), Some(settings.opacity), Action::Opacity, left, right, y)?;
-        self.segmented("Glitter", &names(&GLITTERS), Some(settings.glitter), Action::Glitter, left, right, y)?;
+        let opacity = format!("{}%", settings.opacity);
+        self.slider(tr("opacity"), &opacity, settings.opacity, Slider::Opacity, true, left, right, y)?;
         let kinds = [t("Natural"), t("My Colors")];
         self.segmented("Color", &kinds, Some(settings.custom_colors as usize), |i| Action::CustomColors(i == 1), left, right, y)?;
         if !settings.custom_colors {
-            return Ok(());
+            let note = D2D_RECT_F { left, top: *y, right, bottom: *y + 18.0 };
+            return self.label(&t("Snow and stars take your colors; leaves and petals keep their own."), note, 11.0, false, self.colors.ink, self.colors.muted, LEADING);
         }
         // The chosen colours: a click removes one.
         let diameter = 24.0;
@@ -745,35 +876,49 @@ impl Painter<'_> {
 
     fn behavior_tab(&mut self, view: &View, left: f32, right: f32, y: &mut f32) -> Result<()> {
         let settings = &view.settings;
-        // Rain and stars run off: there is nothing for them to pile up or melt.
-        let settles = !matches!(view.weather, Weather::Rain | Weather::Stars);
-        let rows = [
-            ("Open at Login", view.login, true, Action::OpenAtLogin),
-            ("Accumulate", settings.accumulate, settles, Action::Accumulate),
-            // Only snow melts; leaves and petals stay.
-            ("Melt Snow", settings.melt, view.weather == Weather::Snow && settings.accumulate, Action::Melt),
-            ("Snow on Windows", settings.snow_on_windows, !settings.behind_windows, Action::SnowOnWindows),
-            ("Behind Windows", settings.behind_windows, true, Action::BehindWindows),
-            ("Show in Screenshots", settings.show_in_screenshots, true, Action::Screenshots),
-            ("Fade While Typing", settings.fade_while_typing, true, Action::FadeWhileTyping),
-        ];
-        for (name, on, enabled, action) in rows {
-            let row = D2D_RECT_F { left, top: *y, right, bottom: *y + 32.0 };
-            let alpha = if enabled { 1.0 } else { 0.4 };
-            self.label(&t(name), D2D_RECT_F { right: right - 50.0, ..row }, 13.0, false, self.colors.ink, alpha, LEADING)?;
-            let switch = D2D_RECT_F { left: right - 38.0, top: row.top + 7.0, right, bottom: row.top + 25.0 };
-            self.switch(switch, on, enabled, Hit::App(action))?;
-            *y += 34.0;
-        }
+        let heaps: Vec<Mode> = view.falling.iter().copied().filter(|&mode| mode != Mode::Rain && mode != Mode::Stars).collect();
+        // Only what heaps up melts, withers or wilts, each by its own name.
+        let melt = tr(if heaps.contains(&Mode::Snow) {
+            "melt.snow"
+        } else if heaps == [Mode::Blossom] {
+            "melt.blossom"
+        } else {
+            "melt.autumn"
+        });
+        self.switch_row(tr("login"), view.login, true, Action::OpenAtLogin, left, right, y)?;
+        self.heading(tr("accumulate"), left, right, y)?;
+        self.switch_row(tr("surface.ground"), settings.ground, !heaps.is_empty(), Action::Ground, left, right, y)?;
+        self.switch_row(tr("surface.windows"), settings.snow_on_windows, true, Action::SnowOnWindows, left, right, y)?;
+        self.switch_row(melt, settings.melt, !heaps.is_empty() && settings.accumulates(), Action::Melt, left, right, y)?;
+        self.switch_row(tr("deep"), settings.deep_interaction, settings.snow_on_windows, Action::DeepInteraction, left, right, y)?;
+        self.switch_row(&t("Fade While Typing"), settings.fade_while_typing, true, Action::FadeWhileTyping, left, right, y)?;
         *y += 6.0;
         let schedules: Vec<String> = SCHEDULES.iter().map(|(name, _, _)| t(name)).collect();
-        self.segmented("Schedule", &schedules, Some(settings.schedule), Action::Schedule, left, right, y)?;
-        let caps: Vec<String> = FRAME_CAPS.iter().map(|(name, _)| t(name)).collect();
-        self.segmented("Frame Rate", &caps, Some(settings.frame_cap), Action::FrameCap, left, right, y)
+        self.segmented("Schedule", &schedules, Some(settings.schedule), Action::Schedule, left, right, y)
+    }
+
+    fn display_tab(&mut self, view: &View, left: f32, right: f32, y: &mut f32) -> Result<()> {
+        let settings = &view.settings;
+        self.switch_row(tr("behind"), settings.behind_windows, true, Action::BehindWindows, left, right, y)?;
+        self.switch_row(tr("full_screen"), settings.over_full_screen, !settings.behind_windows, Action::OverFullScreen, left, right, y)?;
+        self.switch_row(tr("taskbar"), settings.behind_taskbar, true, Action::BehindTaskbar, left, right, y)?;
+        self.switch_row(tr("screenshots"), settings.show_in_screenshots, true, Action::Screenshots, left, right, y)?;
+        *y += 6.0;
+        let rates = [t("Eco"), t("Normal"), t("Max")];
+        let rate = if settings.max_performance {
+            2
+        } else if settings.eco {
+            0
+        } else {
+            1
+        };
+        self.segmented("Frame Rate", &rates, Some(rate), Action::Rate, left, right, y)?;
+        let note = D2D_RECT_F { left, top: *y, right, bottom: *y + 18.0 };
+        self.label(&t("Eco draws at most 20 frames a second; Max always at the display's full rate."), note, 11.0, false, self.colors.ink, self.colors.muted, LEADING)
     }
 
     fn more_tab(&mut self, view: &View, left: f32, right: f32, y: &mut f32, capturing: Option<usize>) -> Result<()> {
-        self.heading("Snow-Free Programs", left, right, y)?;
+        self.heading(&t("Snow-Free Programs"), left, right, y)?;
         let row = D2D_RECT_F { left, top: *y, right, bottom: *y + 34.0 };
         match &view.last_app {
             Some(app) => self.button(row, &fill(&t("+ Keep Snow Off {}"), &[app]), Hit::App(Action::Exclude))?,
@@ -795,7 +940,7 @@ impl Painter<'_> {
         }
         *y += 10.0;
 
-        self.heading("Keyboard Shortcuts", left, right, y)?;
+        self.heading(&t("Keyboard Shortcuts"), left, right, y)?;
         for (i, (name, _, _)) in SHORTCUTS.iter().enumerate() {
             let row = D2D_RECT_F { left, top: *y, right, bottom: *y + 32.0 };
             self.label(&t(name), D2D_RECT_F { right: right - 150.0, ..row }, 13.0, false, self.colors.ink, 1.0, LEADING)?;
@@ -818,13 +963,26 @@ impl Painter<'_> {
         }
         let hint = D2D_RECT_F { left, top: *y, right, bottom: *y + 18.0 };
         self.label(&t("Click a shortcut, then press the new keys. Delete removes it."), hint, 11.0, false, self.colors.ink, self.colors.muted, LEADING)?;
-        *y += 30.0;
-        self.button(D2D_RECT_F { left, top: *y, right, bottom: *y + 36.0 }, &t("Check for Updates…"), Hit::App(Action::Updates))
+        *y += 28.0;
+        let half = (right - left - 8.0) / 2.0;
+        self.button(D2D_RECT_F { left, top: *y, right: left + half, bottom: *y + 34.0 }, tr("updates"), Hit::App(Action::Updates))?;
+        self.button(D2D_RECT_F { left: right - half, top: *y, right, bottom: *y + 34.0 }, tr("support"), Hit::App(Action::Support))
     }
 
     fn heading(&mut self, text: &str, left: f32, right: f32, y: &mut f32) -> Result<()> {
-        self.label(&t(text), D2D_RECT_F { left, top: *y, right, bottom: *y + 16.0 }, 11.5, true, self.colors.ink, self.colors.muted, LEADING)?;
+        self.label(text, D2D_RECT_F { left, top: *y, right, bottom: *y + 16.0 }, 11.5, true, self.colors.ink, self.colors.muted, LEADING)?;
         *y += 22.0;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn switch_row(&mut self, name: &str, on: bool, enabled: bool, action: Action, left: f32, right: f32, y: &mut f32) -> Result<()> {
+        let row = D2D_RECT_F { left, top: *y, right, bottom: *y + 30.0 };
+        let alpha = if enabled { 1.0 } else { 0.4 };
+        self.label(name, D2D_RECT_F { right: right - 50.0, ..row }, 13.0, false, self.colors.ink, alpha, LEADING)?;
+        let switch = D2D_RECT_F { left: right - 38.0, top: row.top + 6.0, right, bottom: row.top + 24.0 };
+        self.switch(switch, on, enabled, Hit::App(action))?;
+        *y += 32.0;
         Ok(())
     }
 
@@ -840,7 +998,7 @@ impl Painter<'_> {
         right: f32,
         y: &mut f32,
     ) -> Result<()> {
-        self.heading(title, left, right, y)?;
+        self.heading(&t(title), left, right, y)?;
         self.fill(D2D_RECT_F { left, top: *y, right, bottom: *y + 30.0 }, 8.0, self.colors.ink, self.colors.wash)?;
         let width = (right - left - 4.0) / options.len() as f32;
         for (i, option) in options.iter().enumerate() {
@@ -856,6 +1014,46 @@ impl Painter<'_> {
         }
         *y += 40.0;
         Ok(())
+    }
+
+    /// A slider under its heading, its value on the right: a thin track, filled as far as the value, with a round knob.
+    #[allow(clippy::too_many_arguments)]
+    fn slider(&mut self, title: &str, value_text: &str, value: u32, slider: Slider, enabled: bool, left: f32, right: f32, y: &mut f32) -> Result<()> {
+        self.label(title, D2D_RECT_F { left, top: *y, right: right - 60.0, bottom: *y + 16.0 }, 11.5, true, self.colors.ink, self.colors.muted, LEADING)?;
+        self.label(value_text, D2D_RECT_F { left: right - 80.0, top: *y, right, bottom: *y + 16.0 }, 11.5, true, self.colors.ink, 1.0, TRAILING)?;
+        *y += 22.0;
+        let (low, high) = slider.range();
+        let t = (value.clamp(low, high) - low) as f32 / (high - low) as f32;
+        let track = D2D_RECT_F { left: left + 8.0, top: *y + 12.0, right: right - 8.0, bottom: *y + 16.0 };
+        let alpha = if enabled { 1.0 } else { 0.4 };
+        self.fill(track, 2.0, self.colors.ink, 0.18 * alpha)?;
+        let x = track.left + t * (track.right - track.left);
+        self.fill(D2D_RECT_F { right: x, ..track }, 2.0, self.colors.ink, alpha)?;
+        unsafe {
+            let brush = self.target.CreateSolidColorBrush(&color(self.colors.ink, alpha), None)?;
+            let knob = D2D1_ELLIPSE { point: Vector2 { X: x, Y: *y + 14.0 }, radiusX: 8.0, radiusY: 8.0 };
+            self.target.FillEllipse(&knob, &brush);
+        }
+        // The whole row takes a press, so the knob needn't be hit exactly; the value is read along the track.
+        let area = D2D_RECT_F { left: track.left, top: *y, right: track.right, bottom: *y + 28.0 };
+        if enabled {
+            if self.hover == Some(self.hits.len()) {
+                self.fill(D2D_RECT_F { left, right, ..area }, 8.0, self.colors.ink, 0.05)?;
+            }
+            self.hits.push((area, Hit::Slider(slider)));
+        }
+        *y += 38.0;
+        Ok(())
+    }
+
+    fn chip(&mut self, rect: D2D_RECT_F, text: &str, chosen: bool, enabled: bool, hit: Hit) -> Result<()> {
+        let alpha = if enabled { 1.0 } else { 0.4 };
+        self.fill(rect, 8.0, self.colors.ink, if chosen { alpha } else { self.colors.wash })?;
+        if enabled {
+            self.hit(rect, hit, 8.0)?;
+        }
+        let ink = if chosen { self.colors.on_accent } else { self.colors.ink };
+        self.label(text, rect, 11.5, chosen, ink, alpha, CENTER)
     }
 
     fn button(&mut self, rect: D2D_RECT_F, text: &str, hit: Hit) -> Result<()> {
@@ -921,7 +1119,7 @@ impl Painter<'_> {
         self.text(text, w!("Segoe UI Variable Text"), rect, size, weight, rgb, alpha, align)
     }
 
-    /// A weather's sign, in the symbol font, which draws them in one colour.
+    /// A kind's sign, in the symbol font, which draws them in one colour.
     fn glyph(&self, text: &str, rect: D2D_RECT_F, size: f32, rgb: [f32; 3]) -> Result<()> {
         self.text(text, w!("Segoe UI Symbol"), rect, size, DWRITE_FONT_WEIGHT_NORMAL, rgb, 1.0, CENTER)
     }
@@ -950,17 +1148,6 @@ impl Painter<'_> {
             self.target.DrawText(&units, &format, &inner, &brush, D2D1_DRAW_TEXT_OPTIONS_CLIP, Default::default());
         }
         Ok(())
-    }
-}
-
-/// A weather's sign, in one colour.
-fn sign_of(weather: Weather) -> &'static str {
-    match weather {
-        Weather::Snow => "❄",
-        Weather::Rain => "☂",
-        Weather::Blossoms => "✿",
-        Weather::Leaves => "❦",
-        Weather::Stars => "✦",
     }
 }
 

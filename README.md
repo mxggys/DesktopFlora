@@ -1,38 +1,46 @@
 # DesktopFlora
 
-Schnee (oder Regen, Blüten, Laub) auf dem Windows-Desktop: fällt sanft, bleibt auf Fenstern liegen, rutscht beim Verschieben ab und lässt sich mit dem Mauszeiger wegfegen.
+Schnee, Laub, Regen, Kirschblüten oder Sterne auf dem Windows-Desktop: fällt sanft, bleibt auf Fenstern und am Boden liegen, rutscht beim Verschieben ab und lässt sich mit dem Mauszeiger wegfegen.
 
-Basiert auf [Snowhush](https://github.com/mbezruchko/Snowhush) von Mykhailo Bezruchko (MIT-Lizenz) und erweitert dessen Windows-Version. Hieß vorher „Snowhush Plus“; eine vorhandene Installation wird beim Installieren ersetzt, die Einstellungen bleiben.
+DesktopFlora basiert auf [Snowhush](https://github.com/mbezruchko/Snowhush) von Mykhailo Bezruchko und übernimmt dessen aktuellen Stand (v0.13.1) mit allen Wettern und Verbesserungen, dazu ein eigenes Einstellungsfenster und eigene Funktionen.
 
-**Download:** [Neuestes Release](https://github.com/clavicular-alt/DesktopFlora/releases/latest) → `DesktopFlora-Setup.exe`. Installiert nur für den aktuellen Benutzer, ohne Adminrechte.
+**Download:** [Neuestes Release](https://github.com/clavicular-alt/DesktopFlora/releases/latest) → `DesktopFlora-Setup.exe`. Installiert nur für den aktuellen Benutzer, ohne Adminrechte, und ersetzt eine ältere Installation; die Einstellungen bleiben.
 
-## Neu gegenüber dem Original
+## Was fällt
 
-| Funktion | Wo |
-|---|---|
-| **Eigenes Einstellungsfenster:** Links- oder Rechtsklick aufs Symbol öffnet ein schlichtes Schwarz-Weiß-Fenster mit Milchglas (Windows 11) und vier Reitern (Wetter, Aussehen, Verhalten, Mehr), hell oder dunkel wie Windows | Symbol im Infobereich |
-| **An / Aus:** Schalter oben im Fenster, Doppelklick aufs Symbol oder Tastenkürzel | – |
-| **Wetterarten:** Schnee, Regen (spritzt auf), Blüten (Tropfenform, wenden sich), Laub (echte Blattform mit Mittelrippe, dreht und wendet sich, bunt gesprenkelte Haufen), Sterne (vier Strahlen, funkeln). Was auf Fenstern liegt, fällt als das herunter, was es ist; nur Schnee schmilzt | Wetter |
-| **Jahreszeit:** Winter Schnee, Frühling Blüten, Sommer Sterne, Herbst Laub, passend zum Land aus den Windows-Regionseinstellungen (Südhalbkugel umgekehrt) | Wetter → Jahreszeit |
-| **Echtes Wetter vor Ort:** Regen oder Schnee wie draußen, inkl. Stärke und Wind; bei trockenem Wetter die Jahreszeit am Standort (Open-Meteo, Standort auf ~1 km gerundet, alle 30 min) | Wetter → Echtes Wetter vor Ort |
-| **Tastenkürzel frei wählbar:** An/Aus, Wegfegen, Nächstes Wetter; belegte Kürzel werden angezeigt | Mehr → Tastenkürzel |
-| **Ruhig im Hintergrund:** normale Priorität beim Zeichnen (kein Ruckeln), Effizienzmodus und Speicherfreigabe nur, wenn nichts zu sehen ist; standardmäßig 30 fps, 4 fps ohne Schnee, Sparmodus 20 fps, Fensterliste nur einmal pro Sekunde nachgeprüft | Verhalten → Bildrate |
-| **Größe, Wind, Deckkraft, Glitzern** | Aussehen |
-| **Beim Tippen ausblenden:** Schnee wird blass, solange getippt wird (ohne Tastatur- oder Maus-Hook: erkennt eine Reihe von Eingaben bei ruhender Maus) | Verhalten |
-| **Schneefreie Programme:** kein Schnee auf deren Fenstern; maximiert und im Vordergrund verschwindet der Schnee auf dem Bildschirm ganz | Mehr |
-| **Updates in der App:** lädt das neue Setup, prüft den SHA-256 gegen den Release (GitHub-Digest oder `SHA256SUMS.txt`), installiert still und startet neu. Ohne passende Prüfsumme wird nichts ausgeführt | Mehr → Nach Updates suchen |
-| **Wind von der Maus:** schnelle Bewegungen wirbeln die Flocken auf (Aus / Sanft / Stark) | Aussehen → Wind von der Maus |
-| **Farben:** natürlich oder bis zu 5 eigene Farben aus einer Farbleiste | Aussehen → Farbe |
-| **Zeitplan:** nur abends, tagsüber oder nachts | Verhalten → Zeitplan |
-| **Deutsch**, wenn Windows auf Deutsch läuft | – |
-| **Autostart:** startet ab sofort mit Windows (einmalig eingeschaltet, abschaltbar) | Verhalten → Mit Windows starten |
-| **Signierte Builds** möglich (siehe unten) und **winget**: wird bei jedem Release automatisch eingereicht, sobald das Secret `WINGET_TOKEN` gesetzt ist (siehe `packaging/winget`) | – |
+- **Schnee:** jede Flocke mit eigenem Tempo, Haufen am Boden und auf Fenstern, rutscht beim Ziehen ab, fällt beim Schließen oder Minimieren in Klumpen herunter.
+- **Herbstlaub:** Blätter nach echten Fotos, die sich drehen und wenden, sichtbare Laubhaufen aus einzelnen Blättern, „Laub verwelken“.
+- **Regen:** prasselt und spritzt, läuft an Fenstern und der Taskleiste herunter wie Tropfen auf einer Scheibe, hängt an Unterkanten, lässt sich mit der Maus verwischen.
+- **Kirschblüten:** gewölbte, glänzende Blütenblätter, ab und zu eine ganze Blüte mit Stiel, „Blüten welken“.
+- **Sterne:** kleine Lichter mit Strahlen, die langsam fallen und funkeln.
+- **Zwei mischen**, zum Beispiel Schnee und Laub.
+- **Halloween:** Kürbislaternen im Schnee und Geister mit Schildern, vom 30.10. bis 1.11. oder auf Wunsch.
+- **Jahreszeit:** Winter Schnee, Frühling Blüten, Sommer Sterne, Herbst Laub, passend zum Land aus den Windows-Regionseinstellungen (Südhalbkugel umgekehrt).
+- **Wetter vor Ort:** Regen oder Schnee wie draußen, mit Stärke und Wind; bei trockenem Wetter die Jahreszeit am Standort (Open-Meteo, Standort von Windows auf etwa 1 km gerundet, alle 30 Minuten).
 
-Unverändert vom Original: Pause bei Vollbild-Apps, Präsentationen, Sperrbildschirm und ausgeschaltetem Display; ein Overlay pro Bildschirm; weniger Leistung im Akku- und Energiesparmodus; unsichtbar in Screenshots.
+## Einstellungsfenster
+
+Links- oder Rechtsklick aufs Symbol im Infobereich öffnet ein schlichtes Schwarz-Weiß-Fenster mit Milchglas (Windows 11), hell oder dunkel wie Windows, mit fünf Reitern:
+
+- **Wetter:** woher es kommt (selbst wählen, Jahreszeit, Wetter vor Ort), was fällt, mischen, Halloween, Menge als Schieberegler, Wegfegen.
+- **Aussehen:** Größe, Wind, Deckkraft als Schieberegler, natürliche oder bis zu fünf eigene Farben für Schnee und Sterne.
+- **Verhalten:** Mit Windows starten, liegen bleiben auf Boden und Fenstern, Schmelzen/Verwelken, Schnee auf einer Desktop-Auswahl, beim Tippen ausblenden, Zeitplan.
+- **Anzeige:** hinter Fenstern, über Vollbild, hinter der Taskleiste (z. B. mit TranslucentTB), in Screenshots, Bildrate (Eco 20 fps, Normal, Max).
+- **Mehr:** schneefreie Programme, frei wählbare Tastenkürzel, Updates, Snowhush unterstützen.
+
+Doppelklick aufs Symbol schaltet an und aus. Tastenkürzel (änderbar): Strg+Alt+S an/aus, Strg+Alt+C wegfegen, Strg+Alt+W nächstes Wetter.
+
+## Sonst noch
+
+- Spricht Deutsch, Englisch, Spanisch, Französisch, Japanisch, Portugiesisch, Russisch, Ukrainisch und Chinesisch.
+- Windows-Benachrichtigungen fegen den Schnee beiseite, ein Fenster nimmt seinen Schnee auf einen anderen Bildschirm mit, der Schnee folgt den Ecken jedes Fensters.
+- Pausiert bei Sperrbildschirm, ausgeschaltetem Display und Vollbild-Apps; weniger Last im Akku- und Energiesparbetrieb; Effizienzmodus und Speicherfreigabe, solange nichts zu sehen ist.
+- Updates in der App: lädt das neue Setup, prüft es gegen die SHA-256-Prüfsumme des Releases und installiert nur bei Übereinstimmung.
+- Netzwerk nur für den Update-Check (`api.github.com`, `github.com`) und, wenn eingeschaltet, das Wetter (`api.open-meteo.com`). Keine Telemetrie, kein Tastatur- oder Maus-Hook.
 
 ## Bauen
 
-GitHub Actions baut bei jedem Push auf `main` `DesktopFlora-Setup.exe` und veröffentlicht sie als Release `v<Version>` (Version aus `windows/Cargo.toml`) mit `SHA256SUMS.txt`. Für ein Update: Version erhöhen, pushen.
+GitHub Actions baut bei jedem Push auf `main` `DesktopFlora-Setup.exe` und veröffentlicht sie als Release `v<Version>` (aus `windows/Cargo.toml`) mit `SHA256SUMS.txt`. Optional: Signieren mit den Secrets `SIGN_CERT_BASE64` und `SIGN_PASSWORD`, Einreichen bei winget mit `WINGET_TOKEN` (siehe `packaging/winget`).
 
 Lokal unter Windows (Rust stable):
 
@@ -43,23 +51,6 @@ $env:SNOWHUSH_APP = "$PWD\windows\target\release\DesktopFlora.exe"
 cargo build --release --manifest-path windows/Cargo.toml --bin DesktopFlora-Setup --features setup
 ```
 
-Von macOS/Linux aus: `windows/build.sh` (braucht `cargo-xwin`).
-
-## Signieren (gegen Virenscanner-Fehlalarme)
-
-Ohne Signatur melden einzelne Scanner und SmartScreen das Programm oft fälschlich. Für signierte Builds:
-
-1. Code-Signing-Zertifikat besorgen (z. B. kostenlos für Open Source über [SignPath Foundation](https://signpath.org), oder kommerziell).
-2. Im Repo unter *Settings → Secrets and variables → Actions* anlegen:
-   - `SIGN_CERT_BASE64`: die `.pfx`-Datei als Base64 (`[Convert]::ToBase64String([IO.File]::ReadAllBytes("cert.pfx"))`)
-   - `SIGN_PASSWORD`: ihr Passwort
-3. Der Workflow signiert dann App und Installer automatisch.
-
-## Datenschutz
-
-- Netzwerk nur für: Update-Check (`api.github.com`, `github.com`, nur dieses Repo) und, wenn eingeschaltet, Wetter (`api.open-meteo.com`, mit auf 2 Nachkommastellen gerundeten Koordinaten).
-- Keine Telemetrie, kein Tastatur-Hook, keine Fenstertitel oder -inhalte.
-
 ## Lizenz
 
-MIT, siehe [LICENSE](LICENSE).
+[PolyForm Noncommercial 1.0.0](LICENSE), wie Snowhush ab Version 0.6.2: nutzen, weitergeben und ändern ist erlaubt, verkaufen oder kommerziell nutzen nicht. Die `Required Notice`-Zeilen in der Lizenz müssen bei jeder Weitergabe erhalten bleiben.
