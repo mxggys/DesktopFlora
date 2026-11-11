@@ -8,6 +8,12 @@
 "rain" = "Дощ";
 "blossom" = "Цвіт сакури";
 "stars" = "Зірки";
+"storm" = "Гроза";
+"fog" = "Туман";
+"confetti" = "Конфеті";
+"fireworks" = "Феєрверк";
+"hail" = "Град";
+"fireflies" = "Світлячки";
 "halloween" = "Гелловін";
 "settings" = "Налаштування";
 "behavior" = "Поведінка";

@@ -791,8 +791,8 @@ SpriteOut spriteVertex(SpriteIn s) {
     o.leaf = float4(0.0, 0.0, 0.0, 0.0);
     o.smear = float4(0.0, 0.0, 0.0, 0.0);
     o.rain = float4(0.0, 0.0, 0.0, 0.0);
-    // Two marks a star, drawn with rays; a snowflake has none.
-    o.petal = s.petal > 1.5 ? 2.0 : 0.0;
+    // Two marks a star, drawn with rays, and three a piece of confetti; a snowflake has neither.
+    o.petal = s.petal > 1.5 ? s.petal : 0.0;
     if (s.ghost.x > 0.0) {
         o.spin = time + s.ghost.x * 40.0;
         o.ghost.y = (s.ghost.y - s.position.y) / max(s.body.x, 0.001);
@@ -980,6 +980,23 @@ float4 spriteFragment(SpriteOut i) : SV_Target {
     float t = span > 0.0 ? clamp(dot(p, half_) / span, -1.0, 1.0) : 0.0;
     float2 d = p - half_ * t;
     float r = length(d) / max(i.radius, 0.001);
+    [branch] if (i.petal > 2.5) {
+        // A piece of confetti: a little strip turning as it falls, and flipping, so it narrows and catches the light.
+        float cs = cos(i.spin);
+        float sn = sin(i.spin);
+        float2 c = d / max(i.radius, 0.001);
+        c = float2(c.x * cs - c.y * sn, c.x * sn + c.y * cs);
+        float flip = abs(cos(i.spin * 0.7 + i.lump * 5.0));
+        float halfHeight = max(0.42 * flip, 0.06);
+        float edge = 0.08;
+        float inside = (1.0 - smoothstep(1.0 - edge, 1.0, abs(c.x))) * (1.0 - smoothstep(halfHeight - edge * 0.5, halfHeight, abs(c.y)));
+        float piece = inside * i.alpha;
+        if (piece < 0.002) discard;
+        float3 paper = i.tint.rgb * (0.62 + 0.38 * flip) * light.rgb;
+        // A glint across it as it turns face on.
+        paper = lerp(paper, float3(1.0, 1.0, 1.0), pow(flip, 24.0) * 0.35);
+        return float4(paper * piece, piece);
+    }
     [branch] if (i.petal > 1.5) {
         // A star: a bright core with four soft rays.
         float2 s = d / max(i.radius, 0.001);

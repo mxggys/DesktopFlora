@@ -1,6 +1,6 @@
 🌿 DesktopFlora
 
-DesktopFlora is a modern Windows application designed to enhance your desktop experience. Snow, autumn leaves, rain, cherry blossoms or stars fall across your desktop, settle on your windows and follow the real-time weather outside or the season where you live.
+DesktopFlora is a modern Windows application designed to enhance your desktop experience. Snow, autumn leaves, rain, cherry blossoms, stars, thunderstorms, fog, confetti, fireworks, hail or fireflies fill your desktop, settle on your windows and follow the real-time weather outside or the season where you live.
 
 It is based on [Snowhush](https://github.com/mbezruchko/Snowhush) by Mykhailo Bezruchko.
 
@@ -8,9 +8,9 @@ It is based on [Snowhush](https://github.com/mbezruchko/Snowhush) by Mykhailo Be
 
 🌧️ Dynamic Weather Integration: Follows the weather outside (rain, snow and how heavy it is, wind) and, under a dry sky, the season where you live: snow in winter, blossoms in spring, stars in summer, leaves in autumn.
 
-❄️ Five kinds of weather: snow that piles up and slides off windows, autumn leaves drawn from photos, rain running down your windows, cherry blossoms and twinkling stars. Mix two, or turn on Halloween.
+❄️ Eleven kinds of weather: snow that piles up and slides off windows, autumn leaves drawn from photos, rain running down your windows, cherry blossoms, twinkling stars, thunderstorms with lightning, drifting fog, tumbling confetti, fireworks, bouncing hail and fireflies that shy away from the cursor. Mix two, or turn on Halloween.
 
-🎨 Modern & Clean UI: Snowhush's tray menu on frosted glass for the quick things, and a Settings window laid out like Windows 11's own, with big cards for every option: weather, look, behaviour, display, snow-free programs and keyboard shortcuts.
+🎨 Modern & Clean UI: Snowhush's tray menu on frosted glass for the quick things, and a Settings window laid out like Windows 11's own, with big cards grouped under clear headings on five scrollable pages: overview, look, behaviour, programs & shortcuts, about.
 
 🔄 Updates itself: new versions install on their own, checked against the release's checksum.
 

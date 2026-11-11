@@ -54,6 +54,11 @@ pub fn fill(key: &str, values: &[(&str, &str)]) -> String {
     values.iter().fold(tr(key).to_string(), |text, (name, value)| text.replace(&format!("{{{name}}}"), value))
 }
 
+/// A kind's name in the person's language.
+pub fn mode_name(mode: Mode) -> &'static str {
+    tr(mode_key(mode))
+}
+
 fn mode_key(mode: Mode) -> &'static str {
     match mode {
         Mode::Snow => "snow",
@@ -61,6 +66,12 @@ fn mode_key(mode: Mode) -> &'static str {
         Mode::Rain => "rain",
         Mode::Blossom => "blossom",
         Mode::Stars => "stars",
+        Mode::Storm => "storm",
+        Mode::Fog => "fog",
+        Mode::Confetti => "confetti",
+        Mode::Fireworks => "fireworks",
+        Mode::Hail => "hail",
+        Mode::Fireflies => "fireflies",
     }
 }
 

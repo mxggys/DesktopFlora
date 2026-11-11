@@ -1251,3 +1251,59 @@ fn stars_twinkle_without_settling_and_take_the_palette() {
     assert!(stars.iter().all(|s| s.tint == [1.0, 0.0, 0.0]));
     assert!(!simulation.has_snow(), "stars settled");
 }
+
+#[test]
+fn every_new_weather_shows_and_stays_finite() {
+    use crate::simulation::Mode;
+    for mode in [Mode::Storm, Mode::Fog, Mode::Confetti, Mode::Fireworks, Mode::Hail, Mode::Fireflies] {
+        let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.75);
+        simulation.set_mode(mode);
+        run(&mut simulation, 15.0, AWAY);
+        assert!(simulation.sprite_count() > 0, "{mode:?} shows nothing");
+        assert_finite(&simulation);
+    }
+}
+
+#[test]
+fn a_storm_rains_and_flashes() {
+    use crate::simulation::Mode;
+    let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.75);
+    simulation.set_mode(Mode::Storm);
+    assert!(simulation.raining());
+    let mut flashed = false;
+    for _ in 0..(40.0 / DT) as usize {
+        simulation.step(DT, AWAY);
+        let mut sprites = vec![Sprite::default(); simulation.sprite_count()];
+        let count = simulation.write_sprites(&mut sprites);
+        // The sky's light is a sprite far bigger than the screen is tall.
+        flashed |= sprites[..count].iter().any(|sprite| sprite.size > 1500.0 && sprite.alpha > 0.1);
+    }
+    assert!(flashed, "no lightning in 40 seconds");
+}
+
+#[test]
+fn fog_and_fireflies_fade_once_unwanted() {
+    use crate::simulation::Mode;
+    let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.75);
+    simulation.set_modes(&[Mode::Fog, Mode::Fireflies]);
+    run(&mut simulation, 8.0, AWAY);
+    assert!(simulation.sprite_count() > 0);
+    simulation.set_modes(&[Mode::Snow]);
+    simulation.set_intensity(0.0);
+    run(&mut simulation, 8.0, AWAY);
+    assert_eq!(simulation.sprite_count(), 0, "fog or fireflies stayed");
+}
+
+#[test]
+fn hail_and_confetti_come_to_rest_on_the_ground() {
+    use crate::simulation::Mode;
+    for mode in [Mode::Hail, Mode::Confetti] {
+        let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.5);
+        simulation.set_mode(mode);
+        run(&mut simulation, 25.0, AWAY);
+        let mut sprites = vec![Sprite::default(); simulation.sprite_count()];
+        let count = simulation.write_sprites(&mut sprites);
+        // Lying, they don't move: no smear.
+        assert!(sprites[..count].iter().any(|sprite| sprite.velocity == V2::ZERO && sprite.position.y < 60.0), "{mode:?} never lies");
+    }
+}

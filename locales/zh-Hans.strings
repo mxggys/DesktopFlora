@@ -8,6 +8,12 @@
 "rain" = "雨";
 "blossom" = "樱花";
 "stars" = "星星";
+"storm" = "雷雨";
+"fog" = "雾";
+"confetti" = "彩纸";
+"fireworks" = "烟花";
+"hail" = "冰雹";
+"fireflies" = "萤火虫";
 "halloween" = "万圣节";
 "settings" = "设置";
 "behavior" = "行为";

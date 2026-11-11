@@ -74,15 +74,9 @@ pub const COLOR_PRESETS: [(&str, [f32; 3]); 8] = [
 ];
 
 /// The pages, with their signs down the navigation.
-const PAGES: [(&str, &str); 7] = [
-    ("❄", "Weather"),
-    ("✿", "Look"),
-    ("⚙", "Behavior"),
-    ("▣", "Display"),
-    ("⊘", "Snow-Free Programs"),
-    ("⌨", "Keyboard Shortcuts"),
-    ("ⓘ", "About"),
-];
+const PAGES: [(&str, &str); 5] = [("❄", "Overview"), ("✿", "Look"), ("⚙", "Behavior"), ("⌨", "Programs & Shortcuts"), ("ⓘ", "About")];
+/// How far one notch of the mouse wheel scrolls a page.
+const WHEEL_STEP: f32 = 56.0;
 
 /// What a click in the window asks for.
 #[derive(Clone, Debug)]
@@ -210,6 +204,9 @@ struct Window {
     capturing: Option<usize>,
     /// The slider being dragged, its track, and the value last sent.
     dragging: Option<(Slider, D2D_RECT_F, u32)>,
+    /// How far the page is scrolled down, and how far it can be.
+    scroll: f32,
+    scroll_limit: f32,
     handlers: Handlers,
     d2d: ID2D1Factory,
     text: IDWriteFactory,
@@ -304,6 +301,8 @@ fn open(handlers: Handlers) -> Result<()> {
             hits: Vec::new(),
             capturing: None,
             dragging: None,
+            scroll: 0.0,
+            scroll_limit: 0.0,
             handlers,
             d2d: D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)?,
             text: DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?,
@@ -370,6 +369,20 @@ unsafe extern "system" fn procedure(window: HWND, message: u32, wparam: WPARAM, 
             LRESULT(0)
         }
         WM_ERASEBKGND => LRESULT(1),
+        WM_MOUSEWHEEL => {
+            let notches = ((wparam.0 >> 16) & 0xffff) as i16 as f32 / 120.0;
+            let moved = WINDOW.with_borrow_mut(|open| {
+                let open = open.as_mut()?;
+                let scroll = (open.scroll - notches * WHEEL_STEP).clamp(0.0, open.scroll_limit);
+                let moved = scroll != open.scroll;
+                open.scroll = scroll;
+                Some(moved)
+            });
+            if moved == Some(true) {
+                paint();
+            }
+            LRESULT(0)
+        }
         WM_DESTROY => {
             if let Some(open) = WINDOW.take() {
                 LAST_PAGE.set(open.page);
@@ -485,6 +498,7 @@ fn click(hit: Hit) {
             let was_capturing = WINDOW.with_borrow_mut(|open| {
                 let open = open.as_mut()?;
                 open.page = page;
+                open.scroll = 0.0;
                 open.capturing.take()
             });
             if was_capturing.is_some() {
@@ -693,10 +707,14 @@ impl Window {
             target.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
         }
         let mut painter = Painter { target, text: &self.text, colors: palette(self.mica), hits: Vec::new(), hover: self.hover };
-        let drawn = painter.window(view, self.page, self.capturing);
+        let drawn = painter.window(view, self.page, self.capturing, self.scroll);
         self.hits = std::mem::take(&mut painter.hits);
         unsafe { target.EndDraw(None, None)? };
-        drawn
+        // What the page holds below the window's bottom edge can be scrolled up into view.
+        let bottom = drawn? + self.scroll;
+        self.scroll_limit = (bottom + 24.0 - HEIGHT).max(0.0);
+        self.scroll = self.scroll.min(self.scroll_limit);
+        Ok(())
     }
 }
 
@@ -710,18 +728,23 @@ struct Painter<'a> {
 }
 
 /// What falls, in the order the tiles show them, with their signs.
-const KINDS: [(Mode, &str); 5] = [(Mode::Snow, "❄"), (Mode::Autumn, "❦"), (Mode::Rain, "☂"), (Mode::Blossom, "✿"), (Mode::Stars, "✦")];
+const KINDS: [(Mode, &str); 11] = [
+    (Mode::Snow, "❄"),
+    (Mode::Autumn, "❦"),
+    (Mode::Rain, "☂"),
+    (Mode::Blossom, "✿"),
+    (Mode::Stars, "✦"),
+    (Mode::Storm, "⚡"),
+    (Mode::Fog, "≋"),
+    (Mode::Confetti, "❖"),
+    (Mode::Fireworks, "✺"),
+    (Mode::Hail, "❅"),
+    (Mode::Fireflies, "✧"),
+];
 
 /// A kind's name in the person's language.
 fn name_of(mode: Mode) -> String {
-    tr(match mode {
-        Mode::Snow => "snow",
-        Mode::Autumn => "autumn",
-        Mode::Rain => "rain",
-        Mode::Blossom => "blossom",
-        Mode::Stars => "stars",
-    })
-    .to_string()
+    words::mode_name(mode).to_string()
 }
 
 /// The control on the right of a card.
@@ -735,7 +758,8 @@ enum Control<'a> {
 }
 
 impl Painter<'_> {
-    fn window(&mut self, view: &View, page: usize, capturing: Option<usize>) -> Result<()> {
+    /// Draws the window, its page scrolled up by `scroll`; returns where the page's content ends.
+    fn window(&mut self, view: &View, page: usize, capturing: Option<usize>, scroll: f32) -> Result<f32> {
         let frame = D2D_RECT_F { left: 0.0, top: 0.0, right: WIDTH, bottom: HEIGHT };
         let [r, g, b, a] = self.colors.base;
         self.fill(frame, 0.0, [r, g, b], a)?;
@@ -769,23 +793,53 @@ impl Painter<'_> {
         self.glyph("⏻", D2D_RECT_F { left: quit.left + 12.0, right: quit.left + 40.0, ..quit }, 15.0, self.colors.ink)?;
         self.label(tr("quit"), D2D_RECT_F { left: quit.left + 48.0, ..quit }, 13.5, false, self.colors.ink, 1.0, LEADING)?;
 
-        // The page: its title, then its cards.
+        // The page: its title, then its cards, scrolled and kept to the right of the navigation.
         let (left, right) = (NAV + MARGIN - 12.0, WIDTH - MARGIN);
+        let clip = D2D_RECT_F { left: NAV, top: 0.0, right: WIDTH, bottom: HEIGHT };
+        unsafe { self.target.PushAxisAlignedClip(&clip, windows::Win32::Graphics::Direct2D::D2D1_ANTIALIAS_MODE_ALIASED) };
+        let first = self.hits.len();
         let title = PAGES.get(page).map_or("", |(_, name)| name);
-        self.label(&t(title), D2D_RECT_F { left, top: 20.0, right, bottom: 64.0 }, 26.0, true, self.colors.ink, 1.0, LEADING)?;
-        let mut y = 84.0;
-        match page {
-            0 => self.weather(view, left, right, &mut y),
+        self.label(&t(title), D2D_RECT_F { left, top: 20.0 - scroll, right, bottom: 64.0 - scroll }, 26.0, true, self.colors.ink, 1.0, LEADING)?;
+        let mut y = 84.0 - scroll;
+        let drawn = match page {
+            0 => self.overview(view, left, right, &mut y),
             1 => self.look(view, left, right, &mut y),
             2 => self.behavior(view, left, right, &mut y),
-            3 => self.display(view, left, right, &mut y),
-            4 => self.snow_free(view, left, right, &mut y),
-            5 => self.shortcuts(view, left, right, &mut y, capturing),
+            3 => self.programs(view, left, right, &mut y, capturing),
             _ => self.about(left, right, &mut y),
+        };
+        unsafe { self.target.PopAxisAlignedClip() };
+        // Controls scrolled out of sight can't be clicked.
+        let mut i = first;
+        while i < self.hits.len() {
+            let (rect, _) = &self.hits[i];
+            if rect.bottom <= 0.0 || rect.top >= HEIGHT {
+                self.hits.remove(i);
+            } else {
+                i += 1;
+            }
         }
+        drawn?;
+        // A thin bar on the right says how far down the page is, when there is more of it than fits.
+        let content = y + scroll;
+        if content > HEIGHT - 24.0 {
+            let share = (HEIGHT / (content + 24.0)).min(1.0);
+            let length = (HEIGHT - 16.0) * share;
+            let along = (scroll / (content + 24.0 - HEIGHT).max(1.0)).clamp(0.0, 1.0) * (HEIGHT - 16.0 - length);
+            self.fill(D2D_RECT_F { left: WIDTH - 7.0, top: 8.0 + along, right: WIDTH - 4.0, bottom: 8.0 + along + length }, 1.5, self.colors.ink, 0.35)?;
+        }
+        Ok(y)
     }
 
-    fn weather(&mut self, view: &View, left: f32, right: f32, y: &mut f32) -> Result<()> {
+    /// A heading over a group of cards.
+    fn section(&mut self, text: &str, left: f32, right: f32, y: &mut f32) -> Result<()> {
+        *y += 10.0;
+        self.label(text, D2D_RECT_F { left: left + 2.0, top: *y, right, bottom: *y + 22.0 }, 14.0, true, self.colors.ink, 1.0, LEADING)?;
+        *y += 30.0;
+        Ok(())
+    }
+
+    fn overview(&mut self, view: &View, left: f32, right: f32, y: &mut f32) -> Result<()> {
         let settings = &view.settings;
         let source = if settings.local_weather {
             Source::Outside
@@ -801,13 +855,14 @@ impl Painter<'_> {
         self.card(&t("What falls"), &t("Choose it yourself, follow the season where you live, or the weather outside"), Control::Choices(names, chosen, &pick), left, right, y)?;
 
         if source == Source::Chosen {
-            // A big tile per kind, its sign over its name; mixed, two can be picked.
-            let count = KINDS.len() as f32;
-            let width = (right - left - (count - 1.0) * 8.0) / count;
+            // A big tile per kind, its sign over its name, six to a row; mixed, two can be picked.
+            let columns = 6.0;
+            let width = (right - left - (columns - 1.0) * 8.0) / columns;
             let picked = settings.modes();
             for (i, (mode, sign)) in KINDS.iter().enumerate() {
-                let x = left + i as f32 * (width + 8.0);
-                let rect = D2D_RECT_F { left: x, top: *y, right: x + width, bottom: *y + 104.0 };
+                let x = left + (i % 6) as f32 * (width + 8.0);
+                let top = *y + (i / 6) as f32 * (92.0 + 8.0);
+                let rect = D2D_RECT_F { left: x, top, right: x + width, bottom: top + 92.0 };
                 let selected = picked.contains(mode);
                 if selected {
                     self.fill(rect, 8.0, self.colors.accent, 1.0)?;
@@ -817,10 +872,11 @@ impl Painter<'_> {
                 }
                 self.hit(rect, Hit::App(Action::Pick(*mode)), 8.0)?;
                 let ink = if selected { self.colors.on_accent } else { self.colors.ink };
-                self.glyph(sign, D2D_RECT_F { top: rect.top + 14.0, bottom: rect.top + 62.0, ..rect }, 30.0, ink)?;
-                self.label(&name_of(*mode), D2D_RECT_F { top: rect.top + 66.0, bottom: rect.bottom - 12.0, ..rect }, 12.5, selected, ink, 1.0, CENTER)?;
+                self.glyph(sign, D2D_RECT_F { top: rect.top + 12.0, bottom: rect.top + 54.0, ..rect }, 26.0, ink)?;
+                self.label(&name_of(*mode), D2D_RECT_F { left: rect.left + 4.0, right: rect.right - 4.0, top: rect.top + 58.0, bottom: rect.bottom - 10.0 }, 11.5, selected, ink, 1.0, CENTER)?;
             }
-            *y += 104.0 + GAP + 8.0;
+            let rows = KINDS.len().div_ceil(6) as f32;
+            *y += rows * 100.0 + GAP + 4.0;
             self.card(&t("Mix two"), &t("Two kinds fall together"), Control::Switch(settings.mixed, Action::Mixed), left, right, y)?;
             let note = if view.halloween_possible { t("Jack-o'-lanterns and ghosts in the snow") } else { t("Only over snow alone") };
             if view.halloween_possible {
@@ -839,7 +895,7 @@ impl Painter<'_> {
             self.card(tr("intensity"), &t("How much falls"), Control::Slider(amount, view.intensity, Slider::Intensity), left, right, y)?;
         }
         // Rain and stars don't lie anywhere: nothing to clear.
-        let heaps: Vec<Mode> = view.falling.iter().copied().filter(|&mode| mode != Mode::Rain && mode != Mode::Stars).collect();
+        let heaps: Vec<Mode> = view.falling.iter().copied().filter(|mode| mode.heaps()).collect();
         if !heaps.is_empty() {
             let clear = words::kinds("clear", &heaps).to_string();
             self.card(&clear, &t("Blows away everything lying on the screen"), Control::Button(clear.clone(), Hit::App(Action::Clear)), left, right, y)?;
@@ -885,7 +941,7 @@ impl Painter<'_> {
 
     fn behavior(&mut self, view: &View, left: f32, right: f32, y: &mut f32) -> Result<()> {
         let settings = &view.settings;
-        let heaps: Vec<Mode> = view.falling.iter().copied().filter(|&mode| mode != Mode::Rain && mode != Mode::Stars).collect();
+        let heaps: Vec<Mode> = view.falling.iter().copied().filter(|mode| mode.heaps()).collect();
         // Only what heaps up melts, withers or wilts, each by its own name.
         let melt = tr(if heaps.contains(&Mode::Snow) {
             "melt.snow"
@@ -894,20 +950,15 @@ impl Painter<'_> {
         } else {
             "melt.autumn"
         });
-        self.card(tr("login"), &t("Starts with Windows"), Control::Switch(view.login, Action::OpenAtLogin), left, right, y)?;
-        self.card(&fill(&t("{}: {}"), &[tr("accumulate"), tr("surface.ground")]), &t("Drifts along the bottom of the screen"), Control::Switch(settings.ground, Action::Ground), left, right, y)?;
-        self.card(&fill(&t("{}: {}"), &[tr("accumulate"), tr("surface.windows")]), &t("Settles on the tops of windows and slides off when you drag them"), Control::Switch(settings.snow_on_windows, Action::SnowOnWindows), left, right, y)?;
+        self.section(tr("accumulate"), left, right, y)?;
+        self.card(tr("surface.ground"), &t("Drifts along the bottom of the screen"), Control::Switch(settings.ground, Action::Ground), left, right, y)?;
+        self.card(tr("surface.windows"), &t("Settles on the tops of windows and slides off when you drag them"), Control::Switch(settings.snow_on_windows, Action::SnowOnWindows), left, right, y)?;
         if !heaps.is_empty() {
             self.card(melt, &t("What lies thaws slowly, so it never takes over the screen"), Control::Switch(settings.melt, Action::Melt), left, right, y)?;
         }
         self.card(tr("deep"), &t("Also settles on a selection dragged across the desktop"), Control::Switch(settings.deep_interaction, Action::DeepInteraction), left, right, y)?;
-        self.card(&t("Fade While Typing"), &t("Turns faint while you type"), Control::Switch(settings.fade_while_typing, Action::FadeWhileTyping), left, right, y)?;
-        let schedules: Vec<String> = SCHEDULES.iter().map(|(name, _, _)| t(name)).collect();
-        self.card(&t("Schedule"), &t("When it shows"), Control::Choices(schedules, Some(settings.schedule), &Action::Schedule), left, right, y)
-    }
 
-    fn display(&mut self, view: &View, left: f32, right: f32, y: &mut f32) -> Result<()> {
-        let settings = &view.settings;
+        self.section(tr("display"), left, right, y)?;
         self.card(tr("behind"), &t("Falls behind your windows, in front of the wallpaper"), Control::Switch(settings.behind_windows, Action::BehindWindows), left, right, y)?;
         if !settings.behind_windows {
             self.card(tr("full_screen"), &t("Stays over full-screen apps and games"), Control::Switch(settings.over_full_screen, Action::OverFullScreen), left, right, y)?;
@@ -922,7 +973,21 @@ impl Painter<'_> {
         } else {
             1
         };
-        self.card(&t("Frame Rate"), &t("Eco: at most 20 frames a second. Max: always the display's full rate"), Control::Choices(rates, Some(rate), &Action::Rate), left, right, y)
+        self.card(&t("Frame Rate"), &t("Eco: at most 20 frames a second. Max: always the display's full rate"), Control::Choices(rates, Some(rate), &Action::Rate), left, right, y)?;
+
+        self.section(tr("general"), left, right, y)?;
+        self.card(tr("login"), &t("Starts with Windows"), Control::Switch(view.login, Action::OpenAtLogin), left, right, y)?;
+        self.card(&t("Fade While Typing"), &t("Turns faint while you type"), Control::Switch(settings.fade_while_typing, Action::FadeWhileTyping), left, right, y)?;
+        let schedules: Vec<String> = SCHEDULES.iter().map(|(name, _, _)| t(name)).collect();
+        self.card(&t("Schedule"), &t("When it shows"), Control::Choices(schedules, Some(settings.schedule), &Action::Schedule), left, right, y)
+    }
+
+    /// Snow-free programs and keyboard shortcuts, under their headings.
+    fn programs(&mut self, view: &View, left: f32, right: f32, y: &mut f32, capturing: Option<usize>) -> Result<()> {
+        self.section(&t("Snow-Free Programs"), left, right, y)?;
+        self.snow_free(view, left, right, y)?;
+        self.section(&t("Keyboard Shortcuts"), left, right, y)?;
+        self.shortcuts(view, left, right, y, capturing)
     }
 
     fn snow_free(&mut self, view: &View, left: f32, right: f32, y: &mut f32) -> Result<()> {

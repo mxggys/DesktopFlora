@@ -8,6 +8,12 @@
 "rain" = "Regen";
 "blossom" = "Kirschblüte";
 "stars" = "Sterne";
+"storm" = "Gewitter";
+"fog" = "Nebel";
+"confetti" = "Konfetti";
+"fireworks" = "Feuerwerk";
+"hail" = "Hagel";
+"fireflies" = "Glühwürmchen";
 "halloween" = "Halloween";
 "settings" = "Einstellungen";
 "behavior" = "Verhalten";

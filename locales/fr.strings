@@ -8,6 +8,12 @@
 "rain" = "Pluie";
 "blossom" = "Fleurs de cerisier";
 "stars" = "Étoiles";
+"storm" = "Orage";
+"fog" = "Brouillard";
+"confetti" = "Confettis";
+"fireworks" = "Feu d’artifice";
+"hail" = "Grêle";
+"fireflies" = "Lucioles";
 "halloween" = "Halloween";
 "settings" = "Réglages";
 "behavior" = "Comportement";

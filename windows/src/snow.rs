@@ -595,7 +595,7 @@ fn run_loop(commands: &Receiver<Command>, links: &Links, mut settings: Settings)
 /// window. Snow and leaves lie on its top edge. What falls is what the screens show, the switch to another kind
 /// coming only once the gust has cleared the screen.
 fn over_taskbar(settings: &Settings, screens: &[Screen]) -> bool {
-    settings.behind_taskbar || screens.first().map_or(settings.modes().contains(&Mode::Rain), |screen| screen.simulation.raining())
+    settings.behind_taskbar || screens.first().map_or(settings.modes().iter().any(|mode| mode.rainy()), |screen| screen.simulation.raining())
 }
 
 fn sync_screens(

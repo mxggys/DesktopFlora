@@ -106,10 +106,10 @@ impl Emblem {
             return Emblem::Pumpkin;
         }
         match falling.last().copied().unwrap_or(Mode::Snow) {
-            Mode::Snow | Mode::Stars => Emblem::Snowflake,
             Mode::Autumn => Emblem::Leaf,
-            Mode::Rain => Emblem::Rain,
+            Mode::Rain | Mode::Storm | Mode::Hail => Emblem::Rain,
             Mode::Blossom => Emblem::Blossom,
+            _ => Emblem::Snowflake,
         }
     }
 
@@ -634,7 +634,9 @@ fn entries(sliders: bool) -> Option<Vec<Entry>> {
             }
         };
         let mut modes = vec![Entry::toggle(ID_MIXED, tr("mixed"), settings.mixed && chosen, true), Entry::Separator];
-        modes.extend(Mode::ALL.iter().map(|&mode| kind(mode)));
+        // Snowhush's kinds first; DesktopFlora's own fold out under More Weather, so the list stays short.
+        modes.extend(Mode::ALL[..5].iter().map(|&mode| kind(mode)));
+        modes.push(Entry::Submenu { label: t("More Weather"), entries: Mode::ALL[5..].iter().map(|&mode| kind(mode)).collect() });
         modes.extend([
             Entry::Separator,
             Entry::choice(ID_SEASONAL, &t("Season"), settings.seasonal && !settings.local_weather),
@@ -646,7 +648,7 @@ fn entries(sliders: bool) -> Option<Vec<Entry>> {
         modes.extend([Entry::Separator, Entry::item(ID_HALLOWEEN, tr("halloween"), halloween::wanted(settings.halloween), falling == [Mode::Snow])]);
 
         // Rain and stars don't lie anywhere: nothing to keep, melt or clear.
-        let heaps: Vec<Mode> = falling.iter().copied().filter(|&mode| mode != Mode::Rain && mode != Mode::Stars).collect();
+        let heaps: Vec<Mode> = falling.iter().copied().filter(|mode| mode.heaps()).collect();
         let amount = if intensity == 0 { tr("off").to_string() } else { format!("{intensity}%") };
         let mut entries = vec![Entry::header("DesktopFlora"), Entry::toggle(ID_PAUSE, &t("Snow on"), !settings.paused, true), Entry::Separator];
         if sliders {
@@ -726,7 +728,7 @@ fn status(app: &App, falling: &[Mode]) -> Option<String> {
         Mode::Blossom => t("Spring"),
         Mode::Stars => t("Summer"),
         Mode::Autumn => t("Autumn"),
-        Mode::Rain => String::new(),
+        _ => String::new(),
     };
     if app.settings.local_weather {
         Some(match app.outside {
@@ -743,13 +745,7 @@ fn status(app: &App, falling: &[Mode]) -> Option<String> {
 }
 
 fn mode_name(mode: Mode) -> &'static str {
-    tr(match mode {
-        Mode::Snow => "snow",
-        Mode::Autumn => "autumn",
-        Mode::Rain => "rain",
-        Mode::Blossom => "blossom",
-        Mode::Stars => "stars",
-    })
+    text::mode_name(mode)
 }
 
 /// An intensity as its caption: a percentage, or Off.
@@ -1029,18 +1025,9 @@ fn view() -> Option<View> {
             Mode::Blossom => t("Spring"),
             Mode::Stars => t("Summer"),
             Mode::Autumn => t("Autumn"),
-            Mode::Rain => String::new(),
+            _ => String::new(),
         };
-        let name = |mode: Mode| {
-            tr(match mode {
-                Mode::Snow => "snow",
-                Mode::Autumn => "autumn",
-                Mode::Rain => "rain",
-                Mode::Blossom => "blossom",
-                Mode::Stars => "stars",
-            })
-            .to_string()
-        };
+        let name = |mode: Mode| text::mode_name(mode).to_string();
         let status = if settings.local_weather {
             let first = match app.outside {
                 Some((Conditions { falling: Some(_), .. }, _)) => fill_in(&t("Outside right now: {}"), &[&name(kind)]),

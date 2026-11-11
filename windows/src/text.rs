@@ -17,6 +17,7 @@ pub fn t(text: &str) -> String {
     }
     let translated = match text {
         "Snowfall" => "Schneefall",
+        "More Weather" => "Mehr Wetter",
         "About" => "Info",
         "Choose it yourself, follow the season where you live, or the weather outside" => "Selbst wählen, der Jahreszeit bei dir folgen oder dem Wetter draußen",
         "Two kinds fall together" => "Zwei Arten fallen gleichzeitig",
@@ -108,6 +109,8 @@ pub fn t(text: &str) -> String {
         "{} · {}" => "{} · {}",
         "Paused" => "Pausiert",
         "Behavior" => "Verhalten",
+        "Overview" => "Übersicht",
+        "Programs & Shortcuts" => "Programme & Tastenkürzel",
         "More" => "Mehr",
         "What falls" => "Was fällt",
         "Amount" => "Menge",

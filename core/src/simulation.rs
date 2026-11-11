@@ -7,6 +7,7 @@ use std::ops::Range;
 use crate::geometry::{Rect, V2, smoothstep};
 use crate::layer::{Blend, SnowLayer};
 
+mod extras;
 mod ghosts;
 mod neighbours;
 mod pumpkins;
@@ -98,13 +99,47 @@ pub enum Mode {
     Blossom,
     /// Tiny lights that drift down slowly and twinkle, without settling.
     Stars,
+    /// Heavy, slanting rain with lightning flashing across the sky.
+    Storm,
+    /// Faint, soft fog drifting sideways near the bottom of the screen.
+    Fog,
+    /// Bright confetti tumbling down and lying a while on the ground.
+    Confetti,
+    /// Rockets climbing and bursting into balls of sparks.
+    Fireworks,
+    /// Hailstones bouncing off the windows and the ground.
+    Hail,
+    /// Small lights wandering low and glowing up in a slow pulse.
+    Fireflies,
 }
 
 /// How many kinds of `Mode` there are.
-const MODES: usize = 5;
+const MODES: usize = 11;
 
 impl Mode {
-    pub const ALL: [Mode; MODES] = [Mode::Snow, Mode::Autumn, Mode::Rain, Mode::Blossom, Mode::Stars];
+    pub const ALL: [Mode; MODES] = [
+        Mode::Snow,
+        Mode::Autumn,
+        Mode::Rain,
+        Mode::Blossom,
+        Mode::Stars,
+        Mode::Storm,
+        Mode::Fog,
+        Mode::Confetti,
+        Mode::Fireworks,
+        Mode::Hail,
+        Mode::Fireflies,
+    ];
+
+    /// Falls as rain does, running down the windows: rain, or the storm's.
+    pub fn rainy(self) -> bool {
+        self == Mode::Rain || self == Mode::Storm
+    }
+
+    /// Lies on the ground and the windows in heaps, which can melt, wither or be cleared: snow, leaves and petals.
+    pub fn heaps(self) -> bool {
+        matches!(self, Mode::Snow | Mode::Autumn | Mode::Blossom)
+    }
 
     /// Falls as leaves and heaps up as they do: autumn's, or cherry blossom petals.
     pub fn leafy(self) -> bool {
@@ -278,7 +313,7 @@ struct Flake {
 
 impl Flake {
     fn rain(&self) -> bool {
-        self.kind == Mode::Rain
+        self.kind.rainy()
     }
 
     fn petal(&self) -> bool {
@@ -498,6 +533,7 @@ pub struct SnowSimulation {
     /// The modes waiting for the gust to clear the screen, so one kind never turns into the other in sight.
     next_mode: Option<Vec<Mode>>,
     rain: Rain,
+    extras: extras::Extras,
     switched_at: f64,
     restyled: bool,
     air: Air,
@@ -541,6 +577,7 @@ impl SnowSimulation {
             lying: Vec::new(),
             next_mode: None,
             rain: Rain::default(),
+            extras: extras::Extras::default(),
             switched_at: 0.0,
             restyled: false,
             air: Air {
@@ -739,6 +776,7 @@ impl SnowSimulation {
             + self.air.motes.len()
             + self.haunting.sprite_count()
             + self.rain.sprite_count()
+            + self.extras.sprite_count()
             + self.layers.iter().map(|layer| layer.spray.len() + layer.film.len()).sum::<usize>()
     }
 
@@ -830,6 +868,7 @@ impl SnowSimulation {
         self.blow(dt);
         self.skim(dt);
         self.advance_flakes(dt);
+        self.advance_extras(dt);
         self.advance_grains(dt);
         self.air.advance_motes(dt);
         self.advance_splashes(dt);
@@ -869,7 +908,7 @@ impl SnowSimulation {
         let flying = air.grains.len() > 24 || air.clock < self.scattered_until || air.slide_wind.abs() > 20.0;
         self.pace = if pushed {
             Pace::Interactive
-        } else if flying {
+        } else if flying || self.extras.lively() {
             Pace::Lively
         } else {
             Pace::Calm
@@ -998,7 +1037,7 @@ impl SnowSimulation {
             }
         });
         let mut count = 0;
-        for (slot, sprite) in buffer.iter_mut().zip(lying.chain(flakes).chain(self.rain_sprites()).chain(grains).chain(motes)) {
+        for (slot, sprite) in buffer.iter_mut().zip(self.fog_sprites().chain(lying).chain(flakes).chain(self.rain_sprites()).chain(grains).chain(motes).chain(self.extra_sprites())) {
             *slot = sprite;
             count += 1;
         }
@@ -1757,7 +1796,7 @@ impl SnowSimulation {
     /// How much sparser than snow what heaps up falls, over the kinds falling.
     fn heaping(&self) -> f32 {
         let modes = &self.air.modes;
-        let heaps: Vec<Mode> = modes.iter().copied().filter(|&mode| mode != Mode::Rain).collect();
+        let heaps: Vec<Mode> = modes.iter().copied().filter(|&mode| mode.heaps()).collect();
         if heaps.is_empty() {
             return share_of(Mode::Rain);
         }
@@ -2087,7 +2126,7 @@ impl Air {
     }
 
     fn raining(&self) -> bool {
-        self.modes.contains(&Mode::Rain)
+        self.modes.iter().any(|mode| mode.rainy())
     }
 
     /// Carries snow along with a window that the whole desktop is sliding past: nothing pushes the snow, so it doesn't react.
@@ -2722,8 +2761,16 @@ impl Air {
         if kind.leafy() {
             return self.make_leaf(width, y, kind == Mode::Blossom);
         }
-        if kind == Mode::Rain {
-            return self.make_raindrop(width, y);
+        if kind.rainy() {
+            let mut drop = self.make_raindrop(width, y);
+            if kind == Mode::Storm {
+                // A storm's rain comes harder and slants in its wind.
+                drop.kind = Mode::Storm;
+                drop.velocity.x *= 1.8;
+                drop.velocity.y *= 1.15;
+                drop.fall_speed *= 1.15;
+            }
+            return drop;
         }
         if kind == Mode::Stars {
             return self.make_star(width, y);
@@ -3162,6 +3209,11 @@ fn share_of(mode: Mode) -> f32 {
         LEAF_SHARE
     } else if mode == Mode::Rain {
         RAIN_SHARE
+    } else if mode == Mode::Storm {
+        RAIN_SHARE * 1.7
+    } else if !mode.heaps() && mode != Mode::Stars {
+        // Fog, fireflies, confetti, fireworks and hail keep their own particles, not flakes.
+        0.0
     } else if mode == Mode::Stars {
         // A sky of stars is sparser than a snowfall.
         0.5

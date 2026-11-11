@@ -45,7 +45,10 @@ pub fn conditions(json: &str) -> Option<Conditions> {
     let falling = match code {
         51 | 53 | 55 | 56 | 57 | 61 | 66 | 80 => Some((LIGHT, Mode::Rain)),
         63 | 81 => Some((STEADY, Mode::Rain)),
-        65 | 67 | 82 | 95 | 96 | 99 => Some((HEAVY, Mode::Rain)),
+        65 | 67 | 82 => Some((HEAVY, Mode::Rain)),
+        95 => Some((HEAVY, Mode::Storm)),
+        96 | 99 => Some((HEAVY, Mode::Hail)),
+        45 | 48 => Some((STEADY, Mode::Fog)),
         71 | 77 | 85 => Some((LIGHT, Mode::Snow)),
         73 => Some((STEADY, Mode::Snow)),
         75 | 86 => Some((HEAVY, Mode::Snow)),
@@ -74,7 +77,7 @@ mod tests {
         let clear = ANSWER.replace("\"weather_code\":73", "\"weather_code\":0");
         assert_eq!(conditions(&clear).map(|c| c.falling), Some(None));
         let storm = ANSWER.replace("\"weather_code\":73", "\"weather_code\":95");
-        assert_eq!(conditions(&storm).and_then(|c| c.falling), Some((HEAVY, Mode::Rain)));
+        assert_eq!(conditions(&storm).and_then(|c| c.falling), Some((HEAVY, Mode::Storm)));
         assert_eq!(conditions("{}"), None);
     }
 

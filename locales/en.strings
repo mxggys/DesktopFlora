@@ -11,6 +11,12 @@
 "rain" = "Rain";
 "blossom" = "Cherry Blossom";
 "stars" = "Stars";
+"storm" = "Thunderstorm";
+"fog" = "Fog";
+"confetti" = "Confetti";
+"fireworks" = "Fireworks";
+"hail" = "Hail";
+"fireflies" = "Fireflies";
 "halloween" = "Halloween";
 "settings" = "Settings";
 "behavior" = "Behavior";

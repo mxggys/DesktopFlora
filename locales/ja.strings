@@ -8,6 +8,12 @@
 "rain" = "雨";
 "blossom" = "桜";
 "stars" = "星";
+"storm" = "雷雨";
+"fog" = "霧";
+"confetti" = "紙吹雪";
+"fireworks" = "花火";
+"hail" = "雹";
+"fireflies" = "ホタル";
 "halloween" = "ハロウィン";
 "settings" = "設定";
 "behavior" = "動作";
