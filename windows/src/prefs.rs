@@ -13,7 +13,7 @@ use snowhush_core::simulation::{Look, Mode};
 
 const KEY: PCWSTR = w!("Software\\Snowhush");
 /// What falls by the number the registry keeps it as: new kinds only ever go on the end.
-const MODES: [Mode; 11] = Mode::ALL;
+const MODES: [Mode; 13] = Mode::ALL;
 
 /// Size and breeze choices, in the panel's order.
 pub const SIZES: [(&str, f32); 3] = [("Small", 0.7), ("Normal", 1.0), ("Large", 1.45)];

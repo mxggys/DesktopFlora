@@ -980,6 +980,21 @@ float4 spriteFragment(SpriteOut i) : SV_Target {
     float t = span > 0.0 ? clamp(dot(p, half_) / span, -1.0, 1.0) : 0.0;
     float2 d = p - half_ * t;
     float r = length(d) / max(i.radius, 0.001);
+    [branch] if (i.petal > 3.5) {
+        // A ray of northern lights: a soft column rising from a bright foot and fading upward, green turning violet
+        // toward its top, shimmering as light runs up it.
+        float2 c = d / max(i.radius, 0.001);
+        float v = saturate(c.y * 0.5 + 0.5);
+        float column = exp(-c.x * c.x * 6.0);
+        float rise = smoothstep(0.0, 0.08, v) * pow(1.0 - v, 1.4);
+        float shimmer = 0.7 + 0.3 * sin(v * 9.0 - time * 1.6 + i.lump * 40.0);
+        float glow = column * rise * shimmer * i.alpha;
+        if (glow < 0.002) discard;
+        float3 top = float3(0.74, 0.4, 0.98);
+        float3 color = lerp(i.tint.rgb, top, smoothstep(0.3, 0.95, v) * 0.7) * light.rgb;
+        // Light added to the sky more than laid over it.
+        return float4(color * glow, glow * 0.5);
+    }
     [branch] if (i.petal > 2.5) {
         // A piece of confetti: a little strip turning as it falls, and flipping, so it narrows and catches the light.
         float cs = cos(i.spin);

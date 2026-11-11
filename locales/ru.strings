@@ -14,6 +14,8 @@
 "fireworks" = "Фейерверк";
 "hail" = "Град";
 "fireflies" = "Светлячки";
+"aurora" = "Северное сияние";
+"sandstorm" = "Песчаная буря";
 "halloween" = "Хеллоуин";
 "settings" = "Настройки";
 "behavior" = "Поведение";

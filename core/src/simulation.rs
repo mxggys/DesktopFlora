@@ -49,6 +49,9 @@ const SHAKING: f32 = 4.0;
 /// and a shake that would only stir snow throws them off.
 const LEAF_BREAK_LIFT: f32 = 2.0;
 const LEAF_SHAKING: f32 = 0.8;
+/// How many times past `SHAKING` a shake must be, and for how long (seconds), to throw everything off the window.
+const SHAKE_OFF: f32 = 1.5;
+const SHAKE_TIME: f32 = 0.45;
 /// Leaves hardly stick to a window and slide over it easily: shaken, the window moves out from under them.
 const LEAF_ADHESION: f32 = 500.0;
 const LEAF_GRIP: f32 = 0.8;
@@ -111,10 +114,14 @@ pub enum Mode {
     Hail,
     /// Small lights wandering low and glowing up in a slow pulse.
     Fireflies,
+    /// Northern lights: green and violet curtains rippling across the top of the screen.
+    Aurora,
+    /// Sand and dust driven across the screen, with leaves tumbling along.
+    Sandstorm,
 }
 
 /// How many kinds of `Mode` there are.
-const MODES: usize = 11;
+const MODES: usize = 13;
 
 impl Mode {
     pub const ALL: [Mode; MODES] = [
@@ -129,6 +136,8 @@ impl Mode {
         Mode::Fireworks,
         Mode::Hail,
         Mode::Fireflies,
+        Mode::Aurora,
+        Mode::Sandstorm,
     ];
 
     /// Falls as rain does, running down the windows: rain, or the storm's.
@@ -2298,7 +2307,23 @@ impl Air {
         }
 
         let shakes = if leafy { LEAF_SHAKING } else { SHAKING };
-        if lift > if leafy { LEAF_BREAK_LIFT } else { BREAK_LIFT } {
+        // Shaken hard for a moment, the window throws off everything lying on it.
+        if ledge.agitation > shakes * SHAKE_OFF {
+            ledge.shaken += dt * (ledge.agitation / (shakes * SHAKE_OFF)).min(3.0);
+        } else {
+            ledge.shaken = (ledge.shaken - dt * 0.8).max(0.0);
+        }
+        if ledge.shaken > SHAKE_TIME && ledge.top > 0.05 {
+            // Held there while the shaking lasts, so what lands back on it is thrown off again.
+            ledge.shaken = SHAKE_TIME;
+            let side = if self.random.next() < 0.5 { -1.0 } else { 1.0 };
+            let flung = carried + V2::new(side * self.random.range(120.0, 320.0), self.random.range(60.0, 180.0));
+            self.shed(ledge, 1.0, flung, true);
+            ledge.offset = V2::ZERO;
+            ledge.offset_velocity = V2::ZERO;
+            ledge.thrown = Some(flung);
+            self.heights_changed = true;
+        } else if lift > if leafy { LEAF_BREAK_LIFT } else { BREAK_LIFT } {
             self.shed(ledge, 1.0, carried, true);
             ledge.offset = V2::ZERO;
             ledge.offset_velocity = V2::ZERO;

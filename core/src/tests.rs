@@ -607,6 +607,62 @@ fn a_window_dragged_to_a_display_of_other_pixels_keeps_its_snow() {
     assert_finite(&right);
 }
 
+#[test]
+fn a_window_shaken_hard_throws_off_all_its_snow() {
+    let mut simulation = SnowSimulation::new(1280.0, 800.0, 0.75);
+    simulation.thaws = false;
+    let none = HashSet::new();
+    simulation.update_windows(&[surface(3, 300.0, 600.0, 500.0)], 0.2, &none, &none, false);
+    run(&mut simulation, 90.0, AWAY);
+    simulation.set_intensity(0.0);
+    run(&mut simulation, 10.0, AWAY);
+    let resting = ledge(&simulation);
+    assert!(resting > 0.0);
+    shake(&mut simulation, 3);
+    run(&mut simulation, 3.0, AWAY);
+    let left = ledge(&simulation);
+    assert!(left < resting * 0.2, "resting {resting}, left after shaking {left}");
+}
+
+#[test]
+fn a_window_swayed_gently_keeps_its_snow() {
+    let mut simulation = SnowSimulation::new(1280.0, 800.0, 0.75);
+    simulation.thaws = false;
+    let none = HashSet::new();
+    simulation.update_windows(&[surface(3, 300.0, 600.0, 500.0)], 0.2, &none, &none, false);
+    run(&mut simulation, 90.0, AWAY);
+    simulation.set_intensity(0.0);
+    run(&mut simulation, 10.0, AWAY);
+    let resting = ledge(&simulation);
+    let mut t = 0.0;
+    for _ in 0..240 {
+        t += DT;
+        let x = 300.0 + 40.0 * (2.0 * std::f32::consts::PI * 0.8 * t).sin();
+        simulation.update_windows(&[surface(3, x, 600.0, 500.0)], DT, &none, &none, false);
+        simulation.step(DT, AWAY);
+    }
+    let left = ledge(&simulation);
+    assert!(left > resting * 0.8, "resting {resting}, left after swaying {left}");
+}
+
+#[test]
+fn aurora_and_sandstorm_clear_away_once_unwanted() {
+    use crate::simulation::Mode;
+    for mode in [Mode::Aurora, Mode::Sandstorm] {
+        let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.75);
+        simulation.set_mode(mode);
+        run(&mut simulation, 10.0, AWAY);
+        let shown = simulation.sprite_count();
+        simulation.set_mode(Mode::Snow);
+        run(&mut simulation, 12.0, AWAY);
+        let mut sprites = vec![Sprite::default(); simulation.sprite_count()];
+        let count = simulation.write_sprites(&mut sprites);
+        // Nothing sandy or northern-lit is left: no rays, no dust.
+        let left = sprites[..count].iter().filter(|s| s.petal > 3.5 || (s.tint_amount > 0.99 && s.tint[2] < 0.5)).count();
+        assert!(shown > 0 && left == 0, "{mode:?}: {left} left of {shown}");
+    }
+}
+
 fn shake(simulation: &mut SnowSimulation, id: isize) {
     let none = HashSet::new();
     let mut t = 0.0;
@@ -1255,7 +1311,7 @@ fn stars_twinkle_without_settling_and_take_the_palette() {
 #[test]
 fn every_new_weather_shows_and_stays_finite() {
     use crate::simulation::Mode;
-    for mode in [Mode::Storm, Mode::Fog, Mode::Confetti, Mode::Fireworks, Mode::Hail, Mode::Fireflies] {
+    for mode in [Mode::Storm, Mode::Fog, Mode::Confetti, Mode::Fireworks, Mode::Hail, Mode::Fireflies, Mode::Aurora, Mode::Sandstorm] {
         let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.75);
         simulation.set_mode(mode);
         run(&mut simulation, 15.0, AWAY);

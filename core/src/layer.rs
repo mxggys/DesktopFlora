@@ -81,6 +81,8 @@ pub struct SnowLayer {
     pub offset_velocity: V2,
     pub previous_base_y: f32,
     pub agitation: f32,
+    /// How long the window has been shaken hard, decaying once it stops: shaken long enough, all its snow falls off.
+    pub shaken: f32,
     /// How far the snow has moved along the window since it came, as the window's left edge was dragged in or out
     /// under it: what is drawn in it moves along too.
     pub drift: f32,
@@ -137,6 +139,7 @@ impl SnowLayer {
             offset_velocity: V2::ZERO,
             previous_base_y: origin.y,
             agitation: 0.0,
+            shaken: 0.0,
             drift: 0.0,
             right: 0.0,
             lying_leaves: 0.0,

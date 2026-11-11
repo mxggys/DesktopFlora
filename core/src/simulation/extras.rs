@@ -1,11 +1,11 @@
 //! DesktopFlora's own weathers beside Snowhush's: a thunderstorm's lightning over its rain, fog drifting low, fireflies
 //! glowing and wandering, confetti tumbling down and lying a while, fireworks bursting, and hail bouncing off the
-//! windows and the ground. Each keeps its own particles, which only come while its kind is wanted and go their own way
+//! windows and the ground, northern lights rippling over the sky, and sand driven across the screen. Each keeps its own particles, which only come while its kind is wanted and go their own way
 //! once it isn't: fog and fireflies fade, the rest falls out or burns down.
 
-use std::f32::consts::TAU;
+use std::f32::consts::{PI, TAU};
 
-use super::{Mode, Random, SnowSimulation, Sprite, landing};
+use super::{Mode, Random, SnowSimulation, Sprite, drawn_size, landing, spin, spin_rate, tumble, tumble_speed};
 use crate::geometry::{V2, smoothstep};
 
 /// How much of a screen a megapoint is, to scale how many of each there are.
@@ -16,6 +16,51 @@ const FIREWORK_HUES: [[f32; 3]; 6] = [[1.0, 0.36, 0.3], [1.0, 0.8, 0.3], [0.4, 0
 /// Confetti and hail lying on the ground at once, at most.
 const MAX_LYING: usize = 500;
 const MAX_SPARKS: usize = 2500;
+/// How far apart the rays of a curtain of northern lights stand, in points.
+const RAY_SPACING: f32 = 20.0;
+
+/// A curtain of northern lights: where along the top of the screen it hangs and how it ripples.
+#[derive(Clone, Copy)]
+struct Curtain {
+    /// How high its lower edge hangs, as a share of the screen's height.
+    base: f32,
+    /// Where it starts and ends across the screen, as shares of its width.
+    from: f32,
+    to: f32,
+    amplitude: f32,
+    waves: [f32; 2],
+    speeds: [f32; 2],
+    phase: f32,
+    color: [f32; 3],
+}
+
+/// The northern lights: a few curtains, faded in while they are wanted.
+#[derive(Default)]
+struct Aurora {
+    curtains: Vec<Curtain>,
+    shown: f32,
+}
+
+/// A grain of sand or dust driven along by the storm.
+#[derive(Clone, Copy)]
+struct Grain {
+    position: V2,
+    velocity: V2,
+    size: f32,
+    shade: f32,
+    phase: f32,
+    shown: f32,
+}
+
+/// A leaf caught by a sandstorm, tumbling along with it.
+#[derive(Clone, Copy)]
+struct Debris {
+    position: V2,
+    velocity: V2,
+    seed: f32,
+    phase: f32,
+    size: f32,
+}
 
 /// A puff of fog: big, faint and soft, drifting sideways near the bottom of the screen.
 #[derive(Clone, Copy)]
@@ -96,6 +141,10 @@ pub(super) struct Extras {
     lightning: Lightning,
     next_strike: f64,
     next_burst: f64,
+    aurora: Aurora,
+    haze: Vec<Puff>,
+    grains: Vec<Grain>,
+    debris: Vec<Debris>,
 }
 
 impl Default for Extras {
@@ -110,6 +159,10 @@ impl Default for Extras {
             lightning: Lightning::default(),
             next_strike: 2.0,
             next_burst: 0.5,
+            aurora: Aurora::default(),
+            haze: Vec::new(),
+            grains: Vec::new(),
+            debris: Vec::new(),
         }
     }
 }
@@ -122,11 +175,15 @@ impl Extras {
             + self.hail.len()
             + self.sparks.len()
             + if self.lightning.brightness > 0.01 { self.lightning.path.len() + 1 } else { 0 }
+            + if self.aurora.shown > 0.0 { self.aurora.curtains.len() * 120 } else { 0 }
+            + self.haze.len()
+            + self.grains.len()
+            + self.debris.len()
     }
 
     /// Whether anything moves fast enough to be drawn at more than the calm rate.
     pub(super) fn lively(&self) -> bool {
-        !self.sparks.is_empty() || self.lightning.brightness > 0.01
+        !self.sparks.is_empty() || self.lightning.brightness > 0.01 || !self.grains.is_empty() || !self.debris.is_empty()
     }
 }
 
@@ -379,19 +436,186 @@ impl SnowSimulation {
             lightning.flicker_at = (random.next() < 0.55).then(|| clock + random.range(0.08, 0.2) as f64);
             e.next_strike = clock + (random.range(3.0, 11.0) * (1.4 - amount * 0.8)) as f64;
         }
+
+        // Northern lights: a few curtains hung across the top of the screen, fading in slowly and out again.
+        let aurora = &mut e.aurora;
+        let aurora_wanted = wants(Mode::Aurora);
+        if aurora_wanted && aurora.curtains.is_empty() {
+            let random = &mut e.random;
+            const GREENS: [[f32; 3]; 3] = [[0.3, 1.0, 0.55], [0.25, 0.95, 0.75], [0.45, 1.0, 0.45]];
+            for k in 0..3 {
+                let from = random.range(-0.15, 0.35);
+                aurora.curtains.push(Curtain {
+                    base: random.range(0.6, 0.76) + k as f32 * 0.03,
+                    from,
+                    to: (from + random.range(0.6, 1.0)).min(1.15),
+                    amplitude: random.range(30.0, 70.0),
+                    waves: [random.range(0.002, 0.005), random.range(0.007, 0.013)],
+                    speeds: [random.range(0.08, 0.2), random.range(0.15, 0.35)],
+                    phase: random.range(0.0, TAU),
+                    // Now and then one glows violet and pink instead of green.
+                    color: if k == 2 && random.next() < 0.6 { [0.78, 0.45, 1.0] } else { GREENS[k] },
+                });
+            }
+        }
+        aurora.shown = (aurora.shown + dt / if aurora_wanted { 6.0 } else { -3.0 }).clamp(0.0, 1.0);
+        if aurora.shown <= 0.0 && !aurora_wanted {
+            aurora.curtains.clear();
+        }
+
+        // Sandstorm: a sandy haze driven across the screen, grains streaking through it, leaves tumbling along.
+        let sand = wants(Mode::Sandstorm);
+        let direction = if wind < 0.0 { -1.0 } else { 1.0 };
+        let gust = |t: f64, y: f32| (0.75 + 0.35 * ((t * 0.6) as f32 + y * 0.003).sin() + 0.2 * ((t * 1.7) as f32 - y * 0.01).sin()).max(0.2);
+        let haze_target = if sand { ((8.0 + 18.0 * amount) * area).min(70.0) as usize } else { 0 };
+        while e.haze.len() < haze_target {
+            let random = &mut e.random;
+            let radius = random.range(160.0, 360.0);
+            e.haze.push(Puff {
+                position: V2::new(random.range(-radius, width + radius), random.next().powf(1.4) * height * 0.8),
+                velocity: random.range(90.0, 180.0),
+                radius,
+                alpha: random.range(0.06, 0.12) * (0.5 + 0.5 * amount),
+                shown: 0.0,
+                phase: random.range(0.0, TAU),
+            });
+        }
+        for (i, puff) in e.haze.iter_mut().enumerate() {
+            let keep = i < haze_target;
+            puff.shown = (puff.shown + dt / if keep { 3.0 } else { -2.0 }).clamp(0.0, 1.0);
+            puff.phase += dt * 0.3;
+            puff.position.x += direction * puff.velocity * gust(clock, puff.position.y) * dt;
+            puff.position.y += puff.phase.sin() * 6.0 * dt;
+            if direction > 0.0 && puff.position.x > width + puff.radius * 1.2 {
+                puff.position.x = -puff.radius;
+            } else if direction < 0.0 && puff.position.x < -puff.radius * 1.2 {
+                puff.position.x = width + puff.radius;
+            }
+        }
+        e.haze.retain(|puff| puff.shown > 0.0 || haze_target > 0);
+
+        let grain_target = if sand { ((250.0 + 1400.0 * amount) * area).min(3500.0) as usize } else { 0 };
+        while e.grains.len() < grain_target {
+            let random = &mut e.random;
+            e.grains.push(Grain {
+                position: V2::new(random.range(0.0, width), random.next().powf(1.6) * height),
+                velocity: V2::new(direction * random.range(380.0, 820.0), random.range(-30.0, 30.0)),
+                size: random.range(1.1, 2.6),
+                shade: random.next(),
+                phase: random.range(0.0, TAU),
+                shown: 0.0,
+            });
+        }
+        for grain in e.grains.iter_mut() {
+            grain.shown = (grain.shown + dt * 3.0).min(1.0);
+            grain.phase += dt * (2.0 + grain.shade * 3.0);
+            let push = gust(clock, grain.position.y);
+            let lift = grain.phase.sin() * 60.0 + (grain.position.x * 0.01 + clock as f32 * 2.0).sin() * 40.0;
+            grain.position += V2::new(grain.velocity.x * push, grain.velocity.y + lift) * dt;
+            let floor_here = floor(grain.position.x);
+            if grain.position.y < floor_here + 1.0 {
+                grain.position.y = floor_here + 1.0;
+                grain.velocity.y = grain.velocity.y.abs() + 20.0;
+            }
+            grain.velocity.y *= (-0.8 * dt).exp();
+        }
+        // Blown off the leeward side, a grain comes in again on the windward one while the storm lasts.
+        for grain in e.grains.iter_mut() {
+            let off = if direction > 0.0 { grain.position.x > width + 20.0 } else { grain.position.x < -20.0 };
+            if off && sand {
+                let random = &mut e.random;
+                grain.position = V2::new(if direction > 0.0 { -10.0 } else { width + 10.0 }, random.next().powf(1.6) * height);
+                grain.velocity = V2::new(direction * random.range(380.0, 820.0), random.range(-30.0, 30.0));
+            } else if off {
+                grain.shown = -1.0;
+            }
+        }
+        e.grains.retain(|grain| grain.shown >= 0.0);
+        e.grains.truncate(grain_target.max(if sand { 0 } else { e.grains.len() }));
+
+        let debris_target = if sand { ((4.0 + 16.0 * amount) * area).min(40.0) as usize } else { 0 };
+        while e.debris.len() < debris_target {
+            let random = &mut e.random;
+            e.debris.push(Debris {
+                position: V2::new(if direction > 0.0 { -30.0 } else { width + 30.0 }, random.range(height * 0.03, height * 0.7)),
+                velocity: V2::new(direction * random.range(260.0, 520.0), random.range(-20.0, 60.0)),
+                seed: random.range(0.001, 1.0),
+                phase: random.range(0.0, TAU),
+                size: random.range(14.0, 22.0),
+            });
+        }
+        for leaf in e.debris.iter_mut() {
+            leaf.phase += dt * 2.2;
+            let push = gust(clock, leaf.position.y);
+            // Bobbing and skipping along: lifted by eddies, dropped again, bounced off the ground.
+            leaf.velocity.y += (leaf.phase.sin() * 260.0 - 120.0) * dt;
+            leaf.position += V2::new(leaf.velocity.x * push, leaf.velocity.y) * dt;
+            let floor_here = floor(leaf.position.x);
+            if leaf.position.y < floor_here + leaf.size * 0.4 {
+                leaf.position.y = floor_here + leaf.size * 0.4;
+                leaf.velocity.y = leaf.velocity.y.abs() * 0.6 + 60.0;
+            }
+            if leaf.position.y > height * 0.85 {
+                leaf.velocity.y = -leaf.velocity.y.abs();
+            }
+        }
+        e.debris.retain(|leaf| if direction > 0.0 { leaf.position.x < width + 40.0 } else { leaf.position.x > -40.0 });
     }
 
-    /// Fog, drawn first, under everything else.
+    /// The northern lights, fog and a sandstorm's haze, drawn first, under everything else.
     pub(super) fn fog_sprites(&self) -> impl Iterator<Item = Sprite> + '_ {
         let opacity = self.falling_opacity;
-        self.extras.fog.iter().map(move |puff| Sprite {
-            position: puff.position,
-            size: puff.radius * 2.0,
-            alpha: puff.alpha * smoothstep(0.0, 1.0, puff.shown) * (0.85 + 0.15 * puff.phase.cos()) * opacity,
-            soft: 1.0,
-            tint_amount: 1.0,
-            tint: [0.86, 0.88, 0.92],
-            ..Sprite::default()
+        let puff = move |tint: [f32; 3]| {
+            move |puff: &Puff| Sprite {
+                position: puff.position,
+                size: puff.radius * 2.0,
+                alpha: puff.alpha * smoothstep(0.0, 1.0, puff.shown) * (0.85 + 0.15 * puff.phase.cos()) * opacity,
+                soft: 1.0,
+                tint_amount: 1.0,
+                tint,
+                ..Sprite::default()
+            }
+        };
+        let fog = self.extras.fog.iter().map(puff([0.86, 0.88, 0.92]));
+        let haze = self.extras.haze.iter().map(puff([0.84, 0.68, 0.46]));
+        self.aurora_sprites().chain(fog).chain(haze)
+    }
+
+    /// Each curtain of northern lights as a row of soft rays standing on its rippling lower edge, brighter here and
+    /// fainter there, the brightness wandering along it.
+    fn aurora_sprites(&self) -> impl Iterator<Item = Sprite> + '_ {
+        let aurora = &self.extras.aurora;
+        let (width, height) = (self.width, self.height);
+        let t = self.air.clock as f32;
+        let strength = smoothstep(0.0, 1.0, aurora.shown) * self.falling_opacity * (0.6 + 0.4 * self.intensity.clamp(0.0, 1.0));
+        aurora.curtains.iter().enumerate().filter(move |_| strength > 0.0).flat_map(move |(k, curtain)| {
+            let start = curtain.from * width;
+            let end = curtain.to * width;
+            let count = ((end - start) / RAY_SPACING).max(0.0) as usize;
+            (0..count).map(move |n| {
+                let x = start + n as f32 * RAY_SPACING;
+                let along = (x - start) / (end - start).max(1.0);
+                let ends = (along * PI).sin().max(0.0).powf(0.7);
+                let edge = height * curtain.base
+                    + curtain.amplitude * ((x * curtain.waves[0] + t * curtain.speeds[0] + curtain.phase).sin()
+                        + 0.5 * (x * curtain.waves[1] - t * curtain.speeds[1] + curtain.phase * 2.0).sin());
+                let pulse = 0.5 + 0.5 * (x * 0.009 + t * 0.45 + curtain.phase * 3.0).sin();
+                let bright = ends * (0.25 + 0.75 * pulse * pulse);
+                let tall = height * (0.16 + 0.1 * (x * 0.006 + t * 0.25 + k as f32).sin().abs());
+                Sprite {
+                    // The ray's foot is the bottom of its sprite, on the curtain's edge.
+                    position: V2::new(x, edge + tall * 0.5),
+                    size: tall,
+                    alpha: 0.16 * bright * strength,
+                    soft: 1.0,
+                    tint_amount: 1.0,
+                    tint: curtain.color,
+                    lump: ((x * 0.0131 + k as f32 * 0.37).fract()).max(0.01),
+                    // Four marks a ray of northern lights in the shader.
+                    petal: 4.0,
+                    ..Sprite::default()
+                }
+            })
         })
     }
 
@@ -479,7 +703,27 @@ impl SnowSimulation {
             tint: [0.85, 0.9, 1.0],
             ..Sprite::default()
         });
-        sky.into_iter().chain(glows).chain(confetti).chain(hail).chain(sparks).chain(bolt)
+        let clock = self.air.clock;
+        let grains = e.grains.iter().filter(|grain| grain.shown > 0.0).map(move |grain| Sprite {
+            position: grain.position,
+            velocity: grain.velocity,
+            size: grain.size,
+            alpha: (0.45 + 0.4 * grain.shade) * grain.shown * opacity,
+            soft: 0.5,
+            tint_amount: 1.0,
+            tint: [0.78 + 0.14 * grain.shade, 0.6 + 0.12 * grain.shade, 0.38 + 0.1 * grain.shade],
+            ..Sprite::default()
+        });
+        let debris = e.debris.iter().map(move |leaf| Sprite {
+            position: leaf.position,
+            velocity: leaf.velocity,
+            size: drawn_size(false, leaf.size, leaf.seed),
+            alpha: opacity,
+            leaf: [leaf.seed, leaf.seed * 40.0 + spin(clock, 3.0 + leaf.seed * 4.0), tumble(clock * 3.0, leaf.seed)],
+            spin: [3.0 + leaf.seed * 4.0 + spin_rate(false, leaf.seed), tumble_speed(clock * 3.0, leaf.seed) * 3.0],
+            ..Sprite::default()
+        });
+        sky.into_iter().chain(glows).chain(confetti).chain(hail).chain(sparks).chain(bolt).chain(grains).chain(debris)
     }
 }
 
