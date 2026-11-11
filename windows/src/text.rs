@@ -110,6 +110,8 @@ pub fn t(text: &str) -> String {
         "Paused" => "Pausiert",
         "Behavior" => "Verhalten",
         "Overview" => "Übersicht",
+        "Cursor Trail" => "Mausspur",
+        "Moving the mouse fast ploughs through the snow and whirls up leaves, sand and confetti" => "Schnelle Mausbewegungen pflügen durch den Schnee und wirbeln Blätter, Sand und Konfetti auf",
         "Programs & Shortcuts" => "Programme & Tastenkürzel",
         "More" => "Mehr",
         "What falls" => "Was fällt",

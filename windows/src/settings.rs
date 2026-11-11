@@ -109,6 +109,7 @@ pub enum Action {
     BehindTaskbar,
     Screenshots,
     FadeWhileTyping,
+    CursorTrail,
     OpenAtLogin,
     Clear,
     /// Keeps the snow off the program last in front.
@@ -979,6 +980,7 @@ impl Painter<'_> {
 
         self.section(tr("general"), left, right, y)?;
         self.card(tr("login"), &t("Starts with Windows"), Control::Switch(view.login, Action::OpenAtLogin), left, right, y)?;
+        self.card(&t("Cursor Trail"), &t("Moving the mouse fast ploughs through the snow and whirls up leaves, sand and confetti"), Control::Switch(settings.cursor_trail, Action::CursorTrail), left, right, y)?;
         self.card(&t("Fade While Typing"), &t("Turns faint while you type"), Control::Switch(settings.fade_while_typing, Action::FadeWhileTyping), left, right, y)?;
         let schedules: Vec<String> = SCHEDULES.iter().map(|(name, _, _)| t(name)).collect();
         self.card(&t("Schedule"), &t("When it shows"), Control::Choices(schedules, Some(settings.schedule), &Action::Schedule), left, right, y)

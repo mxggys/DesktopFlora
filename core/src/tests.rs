@@ -1363,3 +1363,26 @@ fn hail_and_confetti_come_to_rest_on_the_ground() {
         assert!(sprites[..count].iter().any(|sprite| sprite.velocity == V2::ZERO && sprite.position.y < 60.0), "{mode:?} never lies");
     }
 }
+
+#[test]
+fn a_fast_cursor_kicks_lying_confetti_back_up() {
+    use crate::simulation::Mode;
+    let lying = |simulation: &SnowSimulation| {
+        let mut sprites = vec![Sprite::default(); simulation.sprite_count()];
+        let count = simulation.write_sprites(&mut sprites);
+        sprites[..count].iter().filter(|s| s.petal > 2.5 && s.petal < 3.5 && s.lump == 0.5 && s.position.x > 100.0 && s.position.x < 1100.0).count()
+    };
+    let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.75);
+    simulation.set_mode(Mode::Confetti);
+    run(&mut simulation, 25.0, AWAY);
+    simulation.set_intensity(0.0);
+    let before = lying(&simulation);
+    // Swept back and forth along the ground, fast.
+    for n in 0..120 {
+        let x = 100.0 + 1000.0 * ((n % 40) as f32 / 40.0);
+        simulation.step(DT, V2::new(x, 6.0));
+    }
+    let after = lying(&simulation);
+    assert!(before > 20 && after < before / 2, "lying before {before}, after sweeping {after}");
+    assert_finite(&simulation);
+}

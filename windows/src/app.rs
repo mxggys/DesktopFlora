@@ -1233,6 +1233,10 @@ fn act(action: Action) {
                 settings.show_in_screenshots = !settings.show_in_screenshots;
                 Some(Command::ShowInScreenshots(settings.show_in_screenshots))
             }
+            Action::CursorTrail => {
+                settings.cursor_trail = !settings.cursor_trail;
+                Some(Command::CursorTrail(settings.cursor_trail))
+            }
             Action::FadeWhileTyping => {
                 settings.fade_while_typing = !settings.fade_while_typing;
                 Some(Command::FadeWhileTyping(settings.fade_while_typing))

@@ -88,6 +88,8 @@ pub struct Settings {
     /// One per entry of `SHORTCUTS`; `None` when someone removed it.
     pub hotkeys: [Option<Hotkey>; 3],
     pub fade_while_typing: bool,
+    /// A fast cursor ploughs a wider trail through what lies and stirs up what it passes.
+    pub cursor_trail: bool,
     /// At most `ECO_RATE` frames a second.
     pub eco: bool,
 }
@@ -161,6 +163,7 @@ impl Settings {
                 Some(packed) => Some(Hotkey { modifiers: packed >> 16, key: packed & 0xffff }),
             }),
             fade_while_typing: read(w!("fadeWhileTyping")).is_some_and(|v| v != 0),
+            cursor_trail: read(w!("cursorTrail")).is_none_or(|v| v != 0),
             eco: read(w!("eco")).is_some_and(|v| v != 0),
         }
     }
@@ -202,6 +205,7 @@ impl Settings {
             write(*name, hotkey.map_or(0, |hotkey| hotkey.modifiers << 16 | hotkey.key));
         }
         write(w!("fadeWhileTyping"), self.fade_while_typing as u32);
+        write(w!("cursorTrail"), self.cursor_trail as u32);
         write(w!("eco"), self.eco as u32);
     }
 

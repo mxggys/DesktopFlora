@@ -200,6 +200,17 @@ impl SnowSimulation {
         let ground = &self.layers[0];
         let floor = |x: f32| ground.surface(ground.clamped_index(x.clamp(0.0, width - 1.0)));
         let palette = self.air.look.palette.clone();
+        // The air a moving cursor drags along stirs up what it passes, while it leaves a trail.
+        let wake = if self.air.trail { self.air.cursor_wake() } else { None };
+        let stir = move |at: V2, reach: f32| -> V2 {
+            let Some((cursor, velocity)) = wake else { return V2::ZERO };
+            let distance = (at - cursor).length();
+            if distance >= reach {
+                return V2::ZERO;
+            }
+            let near = 1.0 - distance / reach;
+            velocity * (near * near)
+        };
         let e = &mut self.extras;
 
         // Fog: puffs keep their number while fog is wanted, and all fade away once it isn't.
@@ -223,6 +234,7 @@ impl SnowSimulation {
             puff.phase += dt * 0.15;
             puff.position.x += (puff.velocity + wind * 0.25) * dt;
             puff.position.y += puff.phase.sin() * 2.0 * dt;
+            puff.position += stir(puff.position, puff.radius * 0.9) * 0.35 * dt;
             // Off one side, it comes back in on the other.
             if puff.position.x < -puff.radius * 1.2 {
                 puff.position.x = width + puff.radius;
@@ -295,15 +307,27 @@ impl SnowSimulation {
             });
         }
         for bit in e.confetti.iter_mut() {
+            let push = stir(bit.position, 70.0);
             if let Some(age) = bit.lying.as_mut() {
                 *age += dt;
+                // Swept by the cursor, it is kicked back up into the air.
+                if push.length() > 120.0 {
+                    bit.lying = None;
+                    bit.position.y += 2.0;
+                    bit.velocity = V2::new(push.x * 0.8, push.length() * 0.5 + 60.0);
+                }
                 continue;
             }
             bit.phase += dt * (1.5 + bit.seed * 2.0);
             let sway = bit.phase.sin() * 28.0 * (0.5 + bit.seed);
+            // Thrown about by the cursor, it settles back into its own slow fall.
+            let fall_speed = -(45.0 + 40.0 * bit.seed);
+            bit.velocity += push * 3.0 * dt;
+            bit.velocity.x *= (-1.5 * dt).exp();
+            bit.velocity.y += (fall_speed - bit.velocity.y) * (1.2 * dt).min(1.0);
             let fall = bit.velocity.y;
             let before = bit.position.y;
-            bit.position += V2::new(wind + sway, fall) * dt;
+            bit.position += V2::new(wind + sway + bit.velocity.x, fall) * dt;
             if bit.position.x < -30.0 {
                 bit.position.x += width + 60.0;
             } else if bit.position.x > width + 30.0 {
@@ -337,10 +361,19 @@ impl SnowSimulation {
         }
         let layers = &self.layers;
         for bit in e.hail.iter_mut() {
+            let push = stir(bit.position, 50.0);
             if let Some(age) = bit.lying.as_mut() {
                 *age += dt;
+                if push.length() > 150.0 {
+                    // Kicked by the cursor, it skitters off across the ground.
+                    bit.lying = None;
+                    bit.position.y += 1.0;
+                    bit.velocity = V2::new(push.x * 0.9, push.length() * 0.4 + 120.0);
+                    bit.bounces = 1;
+                }
                 continue;
             }
+            bit.velocity += push * 2.0 * dt;
             let before = bit.position.y;
             bit.velocity.y -= 1400.0 * dt;
             bit.position += bit.velocity * dt;
@@ -485,6 +518,7 @@ impl SnowSimulation {
             puff.shown = (puff.shown + dt / if keep { 3.0 } else { -2.0 }).clamp(0.0, 1.0);
             puff.phase += dt * 0.3;
             puff.position.x += direction * puff.velocity * gust(clock, puff.position.y) * dt;
+            puff.position += stir(puff.position, puff.radius * 0.9) * 0.35 * dt;
             puff.position.y += puff.phase.sin() * 6.0 * dt;
             if direction > 0.0 && puff.position.x > width + puff.radius * 1.2 {
                 puff.position.x = -puff.radius;
@@ -511,7 +545,11 @@ impl SnowSimulation {
             grain.phase += dt * (2.0 + grain.shade * 3.0);
             let push = gust(clock, grain.position.y);
             let lift = grain.phase.sin() * 60.0 + (grain.position.x * 0.01 + clock as f32 * 2.0).sin() * 40.0;
-            grain.position += V2::new(grain.velocity.x * push, grain.velocity.y + lift) * dt;
+            // Through the cursor's wake the sand is dragged along and whirled round behind it.
+            let stirred = stir(grain.position, 110.0);
+            let swirl = V2::new(-stirred.y, stirred.x) * (if grain.shade < 0.5 { 0.8 } else { -0.8 });
+            grain.velocity.y += (stirred.y + swirl.y) * 2.5 * dt;
+            grain.position += V2::new(grain.velocity.x * push, grain.velocity.y + lift) * dt + (stirred * 1.2 + swirl) * dt;
             let floor_here = floor(grain.position.x);
             if grain.position.y < floor_here + 1.0 {
                 grain.position.y = floor_here + 1.0;
@@ -549,6 +587,9 @@ impl SnowSimulation {
             let push = gust(clock, leaf.position.y);
             // Bobbing and skipping along: lifted by eddies, dropped again, bounced off the ground.
             leaf.velocity.y += (leaf.phase.sin() * 260.0 - 120.0) * dt;
+            let stirred = stir(leaf.position, 120.0);
+            leaf.velocity.y += stirred.y * 3.0 * dt;
+            leaf.position += stirred * 1.5 * dt;
             leaf.position += V2::new(leaf.velocity.x * push, leaf.velocity.y) * dt;
             let floor_here = floor(leaf.position.x);
             if leaf.position.y < floor_here + leaf.size * 0.4 {

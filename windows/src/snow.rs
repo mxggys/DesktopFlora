@@ -81,6 +81,7 @@ pub enum Command {
     /// Programs whose windows get no snow, by lowercase executable name.
     Excluded(Vec<String>),
     FadeWhileTyping(bool),
+    CursorTrail(bool),
     /// The most frames a second, for Eco; zero for no cap.
     RateCap(u32),
     Quit,
@@ -345,6 +346,7 @@ fn run_loop(commands: &Receiver<Command>, links: &Links, mut settings: Settings)
                     }
                 }
                 Command::Excluded(apps) => tracker.set_excluded(apps),
+                Command::CursorTrail(on) => screens.iter_mut().for_each(|screen| screen.simulation.set_cursor_trail(on)),
                 Command::FadeWhileTyping(on) => {
                     fade_while_typing = on;
                     typing = Typing::new();
@@ -770,6 +772,7 @@ fn new_simulation(monitor: &Monitor, settings: &Settings) -> SnowSimulation {
     let (width, height) = dip_size(monitor);
     let mut simulation = SnowSimulation::new(width as f32, height as f32, settings.intensity as f32 / 100.0);
     simulation.thaws = settings.melt;
+    simulation.set_cursor_trail(settings.cursor_trail);
     simulation.accumulates = settings.accumulates();
     simulation.ground_settles = settings.ground;
     simulation.falling_opacity = settings.opacity as f32 / 100.0;

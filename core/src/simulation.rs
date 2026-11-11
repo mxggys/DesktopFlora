@@ -442,6 +442,10 @@ struct Air {
     clock: f64,
     cursor: Option<V2>,
     cursor_velocity: V2,
+    /// How wide the cursor ploughs through what lies, now: wider the faster it goes, while it leaves a trail.
+    plow: f32,
+    /// Whether a fast cursor ploughs a wider trail and stirs up what it passes.
+    trail: bool,
     held_layers: Vec<usize>,
     heights_changed: bool,
     windows_changed: bool,
@@ -597,6 +601,8 @@ impl SnowSimulation {
                 clock: 0.0,
                 cursor: None,
                 cursor_velocity: V2::ZERO,
+                plow: CURSOR_RADIUS,
+                trail: true,
                 held_layers: Vec::new(),
                 heights_changed: false,
                 windows_changed: false,
@@ -1289,11 +1295,15 @@ impl SnowSimulation {
             velocity *= 3000.0 / speed;
         }
         self.air.cursor_velocity += (velocity - self.air.cursor_velocity) * 0.5;
+        // Swept fast through the snow, the cursor ploughs a wider furrow, narrowing again as it slows.
+        let wanted = if self.air.trail { CURSOR_RADIUS * (1.0 + 1.6 * smoothstep(150.0, 1400.0, self.air.cursor_velocity.length())) } else { CURSOR_RADIUS };
+        self.air.plow += (wanted - self.air.plow) * (dt * if wanted > self.air.plow { 12.0 } else { 3.0 }).min(1.0);
+        let plow = self.air.plow;
 
-        let low = center.y.min(previous.y) - CURSOR_RADIUS;
-        let high = center.y.max(previous.y) + CURSOR_RADIUS;
-        let left = center.x.min(previous.x) - CURSOR_RADIUS;
-        let right = center.x.max(previous.x) + CURSOR_RADIUS;
+        let low = center.y.min(previous.y) - plow;
+        let high = center.y.max(previous.y) + plow;
+        let left = center.x.min(previous.x) - plow;
+        let right = center.x.max(previous.x) + plow;
         let touched: Vec<usize> = (0..self.layers.len())
             .filter(|&li| {
                 let layer = &self.layers[li];
@@ -1316,7 +1326,7 @@ impl SnowSimulation {
             }
             return;
         }
-        let steps = (distance / (CURSOR_RADIUS * 0.5)) as usize + 1;
+        let steps = (distance / (plow * 0.5)) as usize + 1;
         for step in 1..=steps {
             let position = previous + delta * (step as f32 / steps as f32);
             for &li in &touched {
@@ -1605,6 +1615,11 @@ impl SnowSimulation {
     // Gust
 
     /// The way the breeze blows now: 1 to the right, -1 to the left.
+    /// Whether a fast cursor ploughs a wider trail through what lies and stirs up what it passes.
+    pub fn set_cursor_trail(&mut self, on: bool) {
+        self.air.trail = on;
+    }
+
     pub fn breeze_direction(&self) -> f32 {
         if self.air.breeze() < 0.0 { -1.0 } else { 1.0 }
     }
@@ -2620,7 +2635,7 @@ impl Air {
     }
 
     fn carve(&mut self, layer: &mut SnowLayer, li: usize, center: V2, velocity: V2, travel: f32, last: bool) {
-        let radius = CURSOR_RADIUS;
+        let radius = self.plow;
         let base = layer.base();
         let lower = (((center.x - radius - base.x) / COLUMN_WIDTH).floor() as i64).max(0);
         let upper = (((center.x + radius - base.x) / COLUMN_WIDTH).floor() as i64).min(layer.count() as i64 - 1);
