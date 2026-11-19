@@ -304,7 +304,8 @@ impl SnowSimulation {
 
         // Spindrift: in a strong wind, fine snow lifts off the drifts along the ground and streams along them.
         let strength = smoothstep(9.0, 22.0, wind.abs());
-        let snowy = wants(Mode::Snow) || ground.top > 1.0;
+        // Only from snow: a heap of leaves doesn't smoke in the wind.
+        let snowy = wants(Mode::Snow) && ground.top > 1.0;
         if strength > 0.0 && snowy {
             let wanted = ((420.0 * strength) * area) as usize;
             let room = wanted.saturating_sub(w.powder.len()).min((wanted / 20).max(2));
