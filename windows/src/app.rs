@@ -11,12 +11,12 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Power::{POWERBROADCAST_SETTING, RegisterPowerSettingNotification};
 use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
 use windows::Win32::System::RemoteDesktop::{NOTIFY_FOR_THIS_SESSION, WTSRegisterSessionNotification};
-use windows::Win32::System::SystemInformation::{GetLocalTime, GetTickCount};
+use windows::Win32::System::SystemInformation::GetLocalTime;
 use windows::Win32::System::SystemServices::GUID_CONSOLE_DISPLAY_STATE;
 use windows::Win32::System::Threading::{CreateEventW, SetEvent};
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
 use windows::Win32::UI::HiDpi::{GetDpiForSystem, GetSystemMetricsForDpi};
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetDoubleClickTime, HOT_KEY_MODIFIERS, MOD_NOREPEAT, RegisterHotKey, UnregisterHotKey};
+use windows::Win32::UI::Input::KeyboardAndMouse::{HOT_KEY_MODIFIERS, MOD_NOREPEAT, RegisterHotKey, UnregisterHotKey};
 use windows::Win32::UI::Shell::{
     NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIIF_INFO, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NIN_SELECT,
     NOTIFYICON_VERSION_4, NOTIFYICONDATAW, Shell_NotifyIconW,
@@ -49,7 +49,6 @@ const TIMER_UPDATES: usize = 2;
 /// Every minute: Halloween, the schedule and the seasons follow the clock.
 const TIMER_MINUTE: usize = 3;
 const TIMER_WEATHER: usize = 4;
-const TIMER_CLICK: usize = 5;
 /// How often to look whether a call has started or ended.
 const TIMER_CALLS: usize = 6;
 const CALLS_INTERVAL: u32 = 4_000;
@@ -186,7 +185,6 @@ struct App {
     sent: Option<Sent>,
     /// Shortcuts another program already holds.
     taken: [bool; 3],
-    double_clicked_at: u32,
     /// The microphone or camera is in use, as in a call.
     in_call: bool,
 }
@@ -261,7 +259,6 @@ pub fn run() -> Result<()> {
             home,
             sent: None,
             taken: [false; 3],
-            double_clicked_at: 0,
             in_call: false,
         };
         send(&app, Command::Excluded(excluded));
@@ -291,38 +288,16 @@ unsafe extern "system" fn procedure(window: HWND, message: u32, wparam: WPARAM, 
     match message {
         WM_TRAY => {
             let event = (lparam.0 & 0xffff) as u32;
-            let now = unsafe { GetTickCount() };
-            let double_click = unsafe { GetDoubleClickTime() };
+            // A left click opens Settings at once; a right click, or Enter on the icon, the quick menu.
             if event == WM_CONTEXTMENU || event == NIN_KEYSELECT {
                 open_menu();
             } else if event == NIN_SELECT {
-                // A click may be the first of a double-click: the menu waits until it's clear it isn't.
-                let after_double = APP.with_borrow(|app| app.as_ref().is_some_and(|app| now.wrapping_sub(app.double_clicked_at) < double_click));
-                if !after_double {
-                    unsafe { SetTimer(Some(window), TIMER_CLICK, double_click, None) };
-                }
-            } else if event == WM_LBUTTONDBLCLK {
-                unsafe {
-                    let _ = KillTimer(Some(window), TIMER_CLICK);
-                }
-                APP.with_borrow_mut(|app| {
-                    if let Some(app) = app {
-                        app.double_clicked_at = now;
-                    }
-                });
-                toggle();
+                open_settings();
             } else if event == NIN_BALLOONUSERCLICK
                 && let Some(release) = APP.with_borrow(|app| app.as_ref().and_then(|app| app.update.clone()))
             {
                 offer(window, release);
             }
-            LRESULT(0)
-        }
-        WM_TIMER if wparam.0 == TIMER_CLICK => {
-            unsafe {
-                let _ = KillTimer(Some(window), TIMER_CLICK);
-            }
-            open_menu();
             LRESULT(0)
         }
         WM_TIMER if wparam.0 == TIMER_MINUTE => {
@@ -529,7 +504,7 @@ fn apply() {
     settings::refresh();
 }
 
-/// On or off: for the menu, the double-click and the shortcut.
+/// On or off: for the menu and the shortcut.
 fn toggle() {
     APP.with_borrow_mut(|app| {
         let Some(app) = app else { return };

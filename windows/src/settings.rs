@@ -1046,7 +1046,7 @@ impl Painter<'_> {
             };
             self.card(&t(name), &t("Click, then press the new keys; Delete removes it"), Control::Keys(text, ink, waiting, i), left, right, y)?;
         }
-        self.note_card(&t("Double-click the tray icon"), &t("Switches the snow on and off"), left, right, y)
+        self.note_card(&t("Click the tray icon"), &t("Opens these settings; a right click opens the quick menu"), left, right, y)
     }
 
     fn about(&mut self, left: f32, right: f32, y: &mut f32) -> Result<()> {

@@ -43,6 +43,14 @@ float smoothNoise(float x) {
     return lerp(hash(float2(i, 0.0)), hash(float2(i + 1.0, 0.0)), f * f * (3.0 - 2.0 * f));
 }
 
+// Smooth noise over the plane, from 0 to 1.
+float smoothNoise2(float2 p) {
+    float2 i = floor(p);
+    float2 f = frac(p);
+    float2 u = f * f * (3.0 - 2.0 * f);
+    return lerp(lerp(hash(i), hash(i + float2(1.0, 0.0)), u.x), lerp(hash(i + float2(0.0, 1.0)), hash(i + float2(1.0, 1.0)), u.x), u.y);
+}
+
 // Blush, soft pink, pink or nearly white, a little lighter or darker.
 float3 petalColor(float seed) {
     // A digitized flower's colour half way out along its petals, a little lighter or darker.
@@ -961,6 +969,21 @@ float4 spriteFragment(SpriteOut i) : SV_Target {
     float t = span > 0.0 ? clamp(dot(p, half_) / span, -1.0, 1.0) : 0.0;
     float2 d = p - half_ * t;
     float r = length(d) / max(i.radius, 0.001);
+    [branch] if (i.petal > 6.5) {
+        // A bank of fog: wide and flat, thinning out at its ends and edges into wisps that drift and change slowly.
+        float2 c = d / max(i.radius, 0.001);
+        float2 e = float2(c.x, c.y * 2.6);
+        float body = exp(-dot(e, e) * 1.8);
+        if (body < 0.01) discard;
+        float2 q = c * float2(1.6, 4.0) + float2(time * 0.025 + i.lump * 31.0, i.lump * 7.0 - time * 0.01);
+        float wisps = 0.55 * smoothNoise2(q) + 0.3 * smoothNoise2(q * 2.1 + 3.7) + 0.15 * smoothNoise2(q * 4.3 - 1.3);
+        float density = body * smoothstep(0.2, 0.75, wisps * 0.9 + body * 0.35);
+        float a = density * i.alpha;
+        if (a < 0.002) discard;
+        // Lit from above, a little brighter on top than underneath.
+        float3 color = i.tint.rgb * (0.92 + 0.08 * saturate(c.y + 0.5)) * light.rgb;
+        return float4(color * a, a);
+    }
     [branch] if (i.petal > 5.5) {
         // A drop left on the glass after rain: a little lens, darker toward its rim, a bright crescent along its foot
         // where the light comes through, a glint near its top.

@@ -223,15 +223,18 @@ impl SnowSimulation {
         let e = &mut self.extras;
 
         // Fog: puffs keep their number while fog is wanted, and all fade away once it isn't.
-        let fog_target = if wants(Mode::Fog) { ((10.0 + 26.0 * amount) * area).min(90.0) as usize } else { 0 };
+        // Wide, flat banks, layered: the lowest densest, the higher ones thinner and slower, drifting the same way.
+        let fog_target = if wants(Mode::Fog) { ((5.0 + 11.0 * amount) * area).min(32.0) as usize } else { 0 };
+        let fog_way = if wind < 0.0 { -1.0 } else { 1.0 };
         while e.fog.len() < fog_target {
             let random = &mut e.random;
-            let radius = random.range(120.0, 300.0);
+            let radius = random.range(260.0, 520.0);
+            let height_share = random.next().powf(1.5);
             e.fog.push(Puff {
-                position: V2::new(random.range(-radius, width + radius), random.next().powf(1.8) * height * 0.42),
-                velocity: random.range(5.0, 14.0) * if random.next() < 0.5 { -1.0 } else { 1.0 },
+                position: V2::new(random.range(-radius, width + radius), height_share * height * 0.45 - radius * 0.08),
+                velocity: fog_way * random.range(6.0, 16.0) * (1.0 - 0.5 * height_share),
                 radius,
-                alpha: random.range(0.05, 0.11) * (0.55 + 0.45 * amount),
+                alpha: random.range(0.2, 0.34) * (1.0 - 0.45 * height_share) * (0.55 + 0.45 * amount),
                 shown: 0.0,
                 phase: random.range(0.0, TAU),
             });
@@ -660,8 +663,18 @@ impl SnowSimulation {
                 ..Sprite::default()
             }
         };
-        let fog = self.extras.fog.iter().map(puff([0.86, 0.88, 0.92]));
-        let haze = self.extras.haze.iter().map(puff([0.84, 0.68, 0.46]));
+        // Fog draws as banks of wisps in the shader, each its own pattern by its seed.
+        let bank = move |tint: [f32; 3]| {
+            move |puff: &Puff| Sprite {
+                alpha: puff.alpha * smoothstep(0.0, 1.0, puff.shown) * opacity,
+                // Steady for the bank, so its wisps only drift: by its size, which never changes.
+                lump: (puff.radius * 0.0137).fract().max(0.01),
+                petal: 7.0,
+                ..puff_sprite(puff, tint)
+            }
+        };
+        let fog = self.extras.fog.iter().map(bank([0.88, 0.9, 0.93]));
+        let haze = self.extras.haze.iter().map(bank([0.84, 0.68, 0.46]));
         let mist = self.extras.mist.iter().map(puff([0.78, 0.82, 0.88]));
         // A storm's heavy cloud: three broad dark shadows over the top of the screen, faint enough to keep the
         // desktop readable, drifting slowly. Lightning lights the sky over them.
@@ -850,6 +863,10 @@ impl SnowSimulation {
         });
         sky.into_iter().chain(strike).chain(glows).chain(confetti).chain(hail).chain(sparks).chain(bolt).chain(grains).chain(debris)
     }
+}
+
+fn puff_sprite(puff: &Puff, tint: [f32; 3]) -> Sprite {
+    Sprite { position: puff.position, size: puff.radius * 2.0, soft: 1.0, tint_amount: 1.0, tint, ..Sprite::default() }
 }
 
 /// A firework bursting: a ball of sparks in one or two colours, and its light for a moment.

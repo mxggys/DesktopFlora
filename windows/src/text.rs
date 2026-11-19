@@ -53,6 +53,8 @@ pub fn t(text: &str) -> String {
         "Remove" => "Entfernen",
         "Click, then press the new keys; Delete removes it" => "Anklicken, dann die neuen Tasten drücken; Entf löscht es",
         "Double-click the tray icon" => "Doppelklick aufs Symbol im Infobereich",
+        "Click the tray icon" => "Klick aufs Symbol im Infobereich",
+        "Opens these settings; a right click opens the quick menu" => "Öffnet diese Einstellungen, ein Rechtsklick das Schnellmenü",
         "Switches the snow on and off" => "Schaltet den Schnee an und aus",
         "Updates install themselves, checked against the release's checksum" => "Updates installieren sich selbst, geprüft gegen die Prüfsumme des Releases",
         "Based on Snowhush" => "Basiert auf Snowhush",
