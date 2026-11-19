@@ -24,6 +24,21 @@ pub struct Conditions {
     pub clouds: f32,
     /// The air outside, in °C.
     pub temperature: f32,
+    /// How damp the air is, in percent.
+    pub humidity: f32,
+    /// Rain or snow on its way while it is dry, and in about how many minutes: within the hour, by the quarter.
+    pub coming: Option<(Mode, u32)>,
+}
+
+impl Conditions {
+    /// How far frost and mist cover the glass in this weather, 0 to 1: frost below freezing, more the colder; mist in
+    /// cold, damp air, as in rain or fog.
+    pub fn glass(&self) -> (f32, f32) {
+        let frost = ((1.0 - self.temperature) / 5.0).clamp(0.0, 1.0);
+        let damp = matches!(self.falling, Some((_, Mode::Rain | Mode::Storm | Mode::Fog | Mode::Hail))) || self.humidity >= 92.0;
+        let mist = if damp && self.temperature <= 10.0 { (0.5 + (10.0 - self.temperature) / 20.0).min(1.0) } else { 0.0 };
+        (frost, mist)
+    }
 }
 
 /// The weather of a season at a latitude: snow in winter, blossoms in spring, stars on summer nights, leaves in autumn.
@@ -46,6 +61,14 @@ pub fn season(month: u32, latitude: f64) -> Mode {
 /// a few petals in spring, a flake or two in winter, and on a clear night the stars, with fireflies on a warm summer
 /// one.
 pub fn outside(month: u32, latitude: f64, sky: &Conditions) -> (u32, Vec<Mode>) {
+    // Rain or snow within the hour, under a dry sky: it starts with a few drops or flakes, among the season's.
+    if sky.falling.is_none()
+        && let Some((coming, _)) = sky.coming
+    {
+        let seasonal = season(month, latitude);
+        let first = if seasonal == coming || seasonal == Mode::Stars { vec![coming] } else { vec![seasonal, coming] };
+        return (8, first);
+    }
     if let Some((amount, mode)) = sky.falling {
         let mut modes = Vec::new();
         if let Some(also) = sky.also.filter(|&also| also != mode) {
@@ -60,19 +83,27 @@ pub fn outside(month: u32, latitude: f64, sky: &Conditions) -> (u32, Vec<Mode>) 
         Mode::Autumn => (8.0 + 14.0 * windy, Mode::Autumn),
         Mode::Blossom => (7.0 + 8.0 * windy, Mode::Blossom),
         Mode::Snow => (if sky.temperature <= 2.0 { 7.0 } else { 4.0 }, Mode::Snow),
-        // Summer: stars and fireflies at night, a few drifting petals by day.
+        // Summer: stars and fireflies at night, dandelion seeds floating by day.
         _ if !sky.day && sky.temperature >= 14.0 => return (12, if clear_night { vec![Mode::Fireflies, Mode::Stars] } else { vec![Mode::Fireflies] }),
         _ if !sky.day => (10.0, Mode::Stars),
-        _ => (5.0, Mode::Blossom),
+        _ => (6.0, Mode::Pollen),
     };
     let amount = amount.round() as u32;
     if clear_night && mode != Mode::Stars { (amount, vec![Mode::Stars, mode]) } else { (amount, vec![mode]) }
 }
 
+/// How far the moon is through its cycle at a moment, in seconds since 1970: 0 at new moon, 0.5 at full.
+pub fn moon_phase(unix_seconds: f64) -> f32 {
+    // A new moon on 6 January 2000 at 18:14 UTC, and the mean length of a lunar month.
+    const NEW_MOON: f64 = 947_182_440.0;
+    const SYNODIC_MONTH: f64 = 29.530_588_853 * 86_400.0;
+    ((unix_seconds - NEW_MOON) / SYNODIC_MONTH).rem_euclid(1.0) as f32
+}
+
 /// The path of the forecast request for a place, rounded to about a kilometre so the request doesn't pinpoint anyone.
 pub fn forecast_path(latitude: f64, longitude: f64) -> String {
     format!(
-        "/v1/forecast?latitude={latitude:.2}&longitude={longitude:.2}&current=weather_code,precipitation,rain,showers,snowfall,cloud_cover,is_day,temperature_2m,wind_speed_10m,wind_gusts_10m&wind_speed_unit=kmh"
+        "/v1/forecast?latitude={latitude:.2}&longitude={longitude:.2}&current=weather_code,precipitation,rain,showers,snowfall,cloud_cover,is_day,temperature_2m,relative_humidity_2m,wind_speed_10m,wind_gusts_10m&minutely_15=precipitation,snowfall&forecast_minutely_15=5&wind_speed_unit=kmh"
     )
 }
 
@@ -89,7 +120,9 @@ fn snow_amount(centimetres: f64) -> u32 {
 /// Reads Open-Meteo's answer.
 pub fn conditions(json: &str) -> Option<Conditions> {
     // `current_units` comes first and names the same keys, so read only past `"current":`.
-    let current = &json[json.find("\"current\":")? + 10..];
+    let after = &json[json.find("\"current\":")? + 10..];
+    // Only the current block itself, so a key it lacks isn't read out of the next one.
+    let current = &after[..after.find('}').map_or(after.len(), |end| end + 1)];
     let code = number(current, "weather_code")? as u32;
     let wind_speed = number(current, "wind_speed_10m").unwrap_or(12.0) as f32;
     let gusts = number(current, "wind_gusts_10m").unwrap_or(wind_speed as f64) as f32;
@@ -129,7 +162,28 @@ pub fn conditions(json: &str) -> Option<Conditions> {
         day: number(current, "is_day").is_none_or(|day| day != 0.0),
         clouds: number(current, "cloud_cover").unwrap_or(50.0) as f32,
         temperature,
+        humidity: number(current, "relative_humidity_2m").unwrap_or(70.0) as f32,
+        coming: coming(json, temperature),
     })
+}
+
+/// The first quarter of the coming hour with rain or snow in the forecast, and which, if any.
+fn coming(json: &str, temperature: f32) -> Option<(Mode, u32)> {
+    let block = &json[json.find("\"minutely_15\":")?..];
+    let precipitation = series(block, "precipitation")?;
+    let snowfall = series(block, "snowfall").unwrap_or_default();
+    // The first is the quarter under way now, which the current weather already tells.
+    let quarter = (1..precipitation.len().min(5)).find(|&i| precipitation[i] >= 0.1)?;
+    let snow = snowfall.get(quarter).is_some_and(|&cm| cm > 0.0) || temperature <= 0.5;
+    Some((if snow { Mode::Snow } else { Mode::Rain }, quarter as u32 * 15))
+}
+
+/// The numbers in the array under `key`.
+fn series(json: &str, key: &str) -> Option<Vec<f64>> {
+    let rest = &json[json.find(&format!("\"{key}\""))? + key.len() + 2..];
+    let rest = rest.trim_start().strip_prefix(':')?.trim_start().strip_prefix('[')?;
+    let end = rest.find(']')?;
+    Some(rest[..end].split(',').map(|value| value.trim().parse().unwrap_or(0.0)).collect())
 }
 
 fn number(json: &str, key: &str) -> Option<f64> {
@@ -145,7 +199,7 @@ mod tests {
 
     const ANSWER: &str = r#"{"latitude":52.52,"current_units":{"time":"iso8601","weather_code":"wmo code","wind_speed_10m":"km/h"},
         "current":{"time":"2026-01-10T12:00","interval":900,"weather_code":73,"precipitation":0.0,"rain":0.0,"showers":0.0,
-        "snowfall":0.0,"cloud_cover":100,"is_day":1,"temperature_2m":-2.0,"wind_speed_10m":24.5,"wind_gusts_10m":30.0}}"#;
+        "snowfall":0.0,"cloud_cover":100,"is_day":1,"temperature_2m":-2.0,"relative_humidity_2m":80,"wind_speed_10m":24.5,"wind_gusts_10m":30.0}"#;
 
     fn sky(code: u32, extra: &[(&str, &str)]) -> Conditions {
         let mut answer = ANSWER.replace("\"weather_code\":73", &format!("\"weather_code\":{code}"));
@@ -206,7 +260,42 @@ mod tests {
         let summer_night = sky(0, &[("is_day", "0"), ("cloud_cover", "10"), ("temperature_2m", "19")]);
         assert_eq!(outside(7, 52.5, &summer_night).1, vec![Mode::Fireflies, Mode::Stars]);
         let summer_day = sky(0, &[("temperature_2m", "24")]);
-        assert_eq!(outside(7, 52.5, &summer_day), (5, vec![Mode::Blossom]));
+        assert_eq!(outside(7, 52.5, &summer_day), (6, vec![Mode::Pollen]));
+    }
+
+    #[test]
+    fn rain_on_its_way_starts_with_a_few_drops() {
+        let forecast = |values: &str| {
+            let answer = ANSWER.replace("\"weather_code\":73", "\"weather_code\":2").replace("\"temperature_2m\":-2.0", "\"temperature_2m\":8.0")
+                + &format!(r#","minutely_15_units":{{"precipitation":"mm"}},"minutely_15":{{"time":[],"precipitation":[{values}],"snowfall":[0,0,0,0,0]}}}}"#);
+            conditions(&answer).unwrap()
+        };
+        let dry = forecast("0,0,0,0,0");
+        assert_eq!(dry.coming, None);
+        let soon = forecast("0,0,0.4,1.2,2.0");
+        assert_eq!(soon.coming, Some((Mode::Rain, 30)));
+        assert_eq!(outside(10, 52.5, &soon), (8, vec![Mode::Autumn, Mode::Rain]));
+        // What falls already is told by the current weather, not by the forecast.
+        assert_eq!(forecast("0.5,0,0,0,0").coming, None);
+    }
+
+    #[test]
+    fn knows_the_moon() {
+        // Full moon on 5 November 2025 at 13:19 UTC; new moon on 20 November 2025 at 06:47 UTC.
+        assert!((moon_phase(1_762_348_740.0) - 0.5).abs() < 0.03);
+        let new = moon_phase(1_763_621_220.0);
+        assert!(!(0.03..=0.97).contains(&new), "{new}");
+    }
+
+    #[test]
+    fn frost_and_mist_on_the_glass() {
+        let freezing = sky(0, &[("temperature_2m", "-4")]);
+        assert_eq!(freezing.glass().0, 1.0);
+        assert_eq!(sky(0, &[("temperature_2m", "6")]).glass(), (0.0, 0.0));
+        let cold_rain = sky(63, &[("rain", "1.0"), ("temperature_2m", "5")]);
+        assert!(cold_rain.glass().1 > 0.5);
+        let warm_rain = sky(63, &[("rain", "1.0"), ("temperature_2m", "20")]);
+        assert_eq!(warm_rain.glass().1, 0.0);
     }
 
     #[test]

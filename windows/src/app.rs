@@ -37,7 +37,8 @@ use crate::update::{self, Release};
 use crate::welcome::{self, Handlers};
 use snowhush_core::simulation::{Look, Mode};
 use snowhush_core::text::{self, tr};
-use snowhush_core::weather::{Conditions, season};
+use snowhush_core::simulation::Atmosphere;
+use snowhush_core::weather::{Conditions, moon_phase, season};
 
 const CLASS: PCWSTR = w!("DesktopFloraController");
 const TITLE: PCWSTR = w!("DesktopFlora");
@@ -49,6 +50,9 @@ const TIMER_UPDATES: usize = 2;
 const TIMER_MINUTE: usize = 3;
 const TIMER_WEATHER: usize = 4;
 const TIMER_CLICK: usize = 5;
+/// How often to look whether a call has started or ended.
+const TIMER_CALLS: usize = 6;
+const CALLS_INTERVAL: u32 = 4_000;
 const WM_UPDATE: u32 = WM_APP + 2;
 const WM_WEATHER: u32 = WM_APP + 3;
 const WM_INSTALLED: u32 = WM_APP + 4;
@@ -156,6 +160,7 @@ struct Sent {
     modes: Vec<Mode>,
     look: Look,
     shown: bool,
+    atmosphere: Atmosphere,
 }
 
 struct App {
@@ -182,6 +187,8 @@ struct App {
     /// Shortcuts another program already holds.
     taken: [bool; 3],
     double_clicked_at: u32,
+    /// The microphone or camera is in use, as in a call.
+    in_call: bool,
 }
 
 thread_local! {
@@ -223,6 +230,7 @@ pub fn run() -> Result<()> {
         }
         SetTimer(Some(window), TIMER_UPDATES, 30_000, None);
         SetTimer(Some(window), TIMER_MINUTE, 60_000, None);
+        SetTimer(Some(window), TIMER_CALLS, CALLS_INTERVAL, None);
         let _ = SetWinEventHook(
             EVENT_SYSTEM_FOREGROUND,
             EVENT_SYSTEM_FOREGROUND,
@@ -254,6 +262,7 @@ pub fn run() -> Result<()> {
             sent: None,
             taken: [false; 3],
             double_clicked_at: 0,
+            in_call: false,
         };
         send(&app, Command::Excluded(excluded));
         APP.set(Some(app));
@@ -318,6 +327,21 @@ unsafe extern "system" fn procedure(window: HWND, message: u32, wparam: WPARAM, 
         }
         WM_TIMER if wparam.0 == TIMER_MINUTE => {
             apply();
+            LRESULT(0)
+        }
+        WM_TIMER if wparam.0 == TIMER_CALLS => {
+            let wanted = APP.with_borrow(|app| app.as_ref().is_some_and(|app| app.settings.calls));
+            let calling = wanted && crate::calls::under_way();
+            let changed = APP.with_borrow_mut(|app| {
+                let Some(app) = app else { return false };
+                let changed = app.in_call != calling;
+                app.in_call = calling;
+                changed
+            });
+            if changed {
+                log!("{}", if calling { "microphone or camera in use: hiding" } else { "microphone and camera free again" });
+                apply();
+            }
             LRESULT(0)
         }
         WM_HOTKEY => {
@@ -440,11 +464,30 @@ fn effective(app: &App, month: u32) -> (u32, Vec<Mode>, f32) {
     match app.outside {
         Some((sky, _)) if settings.local_weather => {
             // As it falls outside; under a dry sky, a pinch of the season's weather, and the stars on a clear night.
+            let sky = Conditions { coming: sky.coming.filter(|_| settings.heads_up), ..sky };
             let (intensity, modes) = snowhush_core::weather::outside(month, latitude, &sky);
             (intensity, modes, sky.wind)
         }
         _ if settings.local_weather || settings.seasonal => (settings.intensity, vec![seasonal], 1.0),
         _ => (settings.intensity, settings.modes(), 1.0),
+    }
+}
+
+/// Frost, mist and the moon for now: from the weather outside while following it, else from what falls and the hour.
+fn atmosphere(app: &App, falling: &[Mode], hour: u32) -> Atmosphere {
+    let settings = &app.settings;
+    let sky = app.outside.filter(|_| settings.local_weather).map(|(sky, _)| sky);
+    let (frost, mist) = match sky {
+        Some(sky) => sky.glass(),
+        None => (if falling.contains(&Mode::Snow) { 0.6 } else { 0.0 }, if falling.contains(&Mode::Fog) { 0.7 } else { 0.0 }),
+    };
+    let night = sky.map_or(!(6..19).contains(&hour), |sky| !sky.day);
+    let clear = sky.is_none_or(|sky| sky.clouds < 80.0) && !falling.iter().any(|mode| mode.rainy() || *mode == Mode::Fog);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |since| since.as_secs_f64());
+    Atmosphere {
+        frost: if settings.frost { frost } else { 0.0 },
+        mist: if settings.misted { mist } else { 0.0 },
+        moon: (settings.moon && night && clear).then(|| moon_phase(now)),
     }
 }
 
@@ -456,8 +499,9 @@ fn apply() {
         let (intensity, modes, outside_wind) = effective(app, now.wMonth as u32);
         let mut look = app.settings.look();
         look.wind *= outside_wind;
-        let shown = !app.settings.paused && app.settings.scheduled(now.wHour as u32);
-        let next = Sent { intensity, modes: modes.clone(), look: look.clone(), shown };
+        let shown = !app.settings.paused && app.settings.scheduled(now.wHour as u32) && !(app.settings.calls && app.in_call);
+        let atmosphere = atmosphere(app, &modes, now.wHour as u32);
+        let next = Sent { intensity, modes: modes.clone(), look: look.clone(), shown, atmosphere };
         let sent = app.sent.clone();
         if sent.as_ref().map(|s| s.intensity) != Some(intensity) {
             send(app, Command::Intensity(intensity as f32 / 100.0));
@@ -473,6 +517,9 @@ fn apply() {
         }
         if sent.as_ref().map(|s| s.shown) != Some(shown) {
             send(app, Command::Shown(shown));
+        }
+        if sent.as_ref().map(|s| s.atmosphere) != Some(atmosphere) {
+            send(app, Command::Atmosphere(atmosphere));
         }
         // Halloween comes and goes with the date: the snow thread checks it itself, the tray here.
         send(app, Command::Halloween(app.settings.halloween));
@@ -1270,6 +1317,29 @@ fn act(action: Action) {
             Action::Screenshots => {
                 settings.show_in_screenshots = !settings.show_in_screenshots;
                 Some(Command::ShowInScreenshots(settings.show_in_screenshots))
+            }
+            Action::Frost => {
+                settings.frost = !settings.frost;
+                None
+            }
+            Action::Misted => {
+                settings.misted = !settings.misted;
+                None
+            }
+            Action::Moon => {
+                settings.moon = !settings.moon;
+                None
+            }
+            Action::PauseInCalls => {
+                settings.calls = !settings.calls;
+                if !settings.calls {
+                    app.in_call = false;
+                }
+                None
+            }
+            Action::HeadsUp => {
+                settings.heads_up = !settings.heads_up;
+                None
             }
             Action::CursorTrail => {
                 settings.cursor_trail = !settings.cursor_trail;

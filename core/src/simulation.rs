@@ -7,7 +7,9 @@ use std::ops::Range;
 use crate::geometry::{Rect, V2, smoothstep};
 use crate::layer::{Blend, SnowLayer};
 
+mod atmosphere;
 mod extras;
+pub use atmosphere::Atmosphere;
 mod ghosts;
 mod neighbours;
 mod pumpkins;
@@ -118,10 +120,12 @@ pub enum Mode {
     Aurora,
     /// Sand and dust driven across the screen, with leaves tumbling along.
     Sandstorm,
+    /// Dandelion seeds floating on the summer air.
+    Pollen,
 }
 
 /// How many kinds of `Mode` there are.
-const MODES: usize = 13;
+const MODES: usize = 14;
 
 impl Mode {
     pub const ALL: [Mode; MODES] = [
@@ -138,6 +142,7 @@ impl Mode {
         Mode::Fireflies,
         Mode::Aurora,
         Mode::Sandstorm,
+        Mode::Pollen,
     ];
 
     /// Falls as rain does, running down the windows: rain, or the storm's.
@@ -547,6 +552,7 @@ pub struct SnowSimulation {
     next_mode: Option<Vec<Mode>>,
     rain: Rain,
     extras: extras::Extras,
+    weathering: atmosphere::Weathering,
     switched_at: f64,
     restyled: bool,
     air: Air,
@@ -591,6 +597,7 @@ impl SnowSimulation {
             next_mode: None,
             rain: Rain::default(),
             extras: extras::Extras::default(),
+            weathering: atmosphere::Weathering::default(),
             switched_at: 0.0,
             restyled: false,
             air: Air {
@@ -792,12 +799,13 @@ impl SnowSimulation {
             + self.haunting.sprite_count()
             + self.rain.sprite_count()
             + self.extras.sprite_count()
+            + self.weathering.sprite_count()
             + self.layers.iter().map(|layer| layer.spray.len() + layer.film.len()).sum::<usize>()
     }
 
     /// Anything drawn that moves: a leaf lying still is redrawn only as it settles, sinks or fades.
     fn moving(&self) -> bool {
-        self.sprite_count() > self.lying.len()
+        self.sprite_count() > self.lying.len() + self.weathering.resting()
     }
 
     /// Floats the renderer needs per frame: each layer's surface, bed and what it is made of.
@@ -889,6 +897,7 @@ impl SnowSimulation {
         self.skim(dt);
         self.advance_flakes(dt);
         self.advance_extras(dt);
+        self.advance_atmosphere(dt);
         self.advance_grains(dt);
         self.air.advance_motes(dt);
         self.advance_splashes(dt);
@@ -928,7 +937,7 @@ impl SnowSimulation {
         let flying = air.grains.len() > 24 || air.clock < self.scattered_until || air.slide_wind.abs() > 20.0;
         self.pace = if pushed {
             Pace::Interactive
-        } else if flying || self.extras.lively() {
+        } else if flying || self.extras.lively() || self.weathering.lively() {
             Pace::Lively
         } else {
             Pace::Calm
@@ -1057,7 +1066,7 @@ impl SnowSimulation {
             }
         });
         let mut count = 0;
-        for (slot, sprite) in buffer.iter_mut().zip(self.fog_sprites().chain(lying).chain(flakes).chain(self.rain_sprites()).chain(grains).chain(motes).chain(self.extra_sprites())) {
+        for (slot, sprite) in buffer.iter_mut().zip(self.sky_sprites().chain(self.fog_sprites()).chain(lying).chain(flakes).chain(self.rain_sprites()).chain(grains).chain(motes).chain(self.extra_sprites()).chain(self.glass_sprites())) {
             *slot = sprite;
             count += 1;
         }

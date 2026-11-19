@@ -82,6 +82,8 @@ pub enum Command {
     Excluded(Vec<String>),
     FadeWhileTyping(bool),
     CursorTrail(bool),
+    /// Frost and mist on the glass, and the moon.
+    Atmosphere(snowhush_core::simulation::Atmosphere),
     /// The most frames a second, for Eco; zero for no cap.
     RateCap(u32),
     Quit,
@@ -90,6 +92,9 @@ pub enum Command {
 thread_local! {
     /// The look new displays' snow starts with.
     static LOOK: std::cell::RefCell<Look> = std::cell::RefCell::new(Look::default());
+    /// Frost, mist and the moon, for new displays' snow too.
+    static ATMOSPHERE: std::cell::Cell<snowhush_core::simulation::Atmosphere> =
+        const { std::cell::Cell::new(snowhush_core::simulation::Atmosphere { frost: 0.0, mist: 0.0, moon: None }) };
 }
 
 /// Opacity what falls fades to while someone types.
@@ -359,6 +364,14 @@ fn run_loop(commands: &Receiver<Command>, links: &Links, mut settings: Settings)
                 }
                 Command::Excluded(apps) => tracker.set_excluded(apps),
                 Command::CursorTrail(on) => screens.iter_mut().for_each(|screen| screen.simulation.set_cursor_trail(on)),
+                Command::Atmosphere(atmosphere) => {
+                    ATMOSPHERE.set(atmosphere);
+                    let now = Clock::now();
+                    screens.iter_mut().for_each(|screen| {
+                        screen.simulation.set_atmosphere(atmosphere);
+                        screen.wake(now);
+                    });
+                }
                 Command::FadeWhileTyping(on) => {
                     fade_while_typing = on;
                     typing = Typing::new();
@@ -879,6 +892,7 @@ fn new_simulation(monitor: &Monitor, settings: &Settings) -> SnowSimulation {
     let mut simulation = SnowSimulation::new(width as f32, height as f32, settings.intensity as f32 / 100.0);
     simulation.thaws = settings.melt;
     simulation.set_cursor_trail(settings.cursor_trail);
+    simulation.set_atmosphere(ATMOSPHERE.get());
     simulation.accumulates = settings.accumulates();
     simulation.ground_settles = settings.ground;
     simulation.falling_opacity = settings.opacity as f32 / 100.0;

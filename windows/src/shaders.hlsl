@@ -961,6 +961,38 @@ float4 spriteFragment(SpriteOut i) : SV_Target {
     float t = span > 0.0 ? clamp(dot(p, half_) / span, -1.0, 1.0) : 0.0;
     float2 d = p - half_ * t;
     float r = length(d) / max(i.radius, 0.001);
+    [branch] if (i.petal > 5.5) {
+        // A drop left on the glass after rain: a little lens, darker toward its rim, a bright crescent along its foot
+        // where the light comes through, a glint near its top.
+        float2 c = d / max(i.radius, 0.001);
+        float rr = length(c);
+        float inside = 1.0 - smoothstep(0.86, 1.0, rr);
+        if (inside < 0.002) discard;
+        float darkA = 0.06 + 0.34 * smoothstep(0.45, 1.0, rr) * (0.6 + 0.4 * saturate(c.y));
+        float crescent = smoothstep(0.45, 0.92, rr) * smoothstep(0.0, -0.75, c.y) * 0.45;
+        float2 g = c - float2(-0.32, 0.4);
+        float glint = exp(-dot(g, g) / 0.03) * 0.9;
+        return lensColor(darkA, saturate(crescent + glint), inside, i.alpha);
+    }
+    [branch] if (i.petal > 4.5) {
+        // The moon in its phase: lit beyond the terminator, the rest faintly by earthshine, its seas darker.
+        float2 c = d / max(i.radius, 0.001);
+        float rr = length(c);
+        float disc = 1.0 - smoothstep(0.94, 1.0, rr);
+        if (disc < 0.002) discard;
+        float phase = i.lump;
+        float k = cos(phase * 6.2831853);
+        float across = sqrt(saturate(1.0 - c.y * c.y));
+        float edge = phase < 0.5 ? c.x - k * across : -k * across - c.x;
+        float lit = smoothstep(-0.06, 0.06, edge);
+        float seas = 0.5 + 0.5 * sin(c.x * 5.3 + 1.1) * sin(c.y * 4.1 - 0.4) + 0.25 * sin(c.x * 11.0 - c.y * 9.0);
+        float tone = 0.86 - 0.14 * smoothstep(0.45, 0.9, seas);
+        // Toward its rim the face darkens a little, as a ball lit from in front does.
+        tone *= 0.88 + 0.12 * sqrt(saturate(1.0 - rr * rr));
+        float3 face = i.tint.rgb * tone * light.rgb;
+        float a = disc * (0.08 + 0.92 * lit) * i.alpha;
+        return float4(face * a, a);
+    }
     [branch] if (i.petal > 3.5) {
         // A ray of northern lights: a soft column rising from a bright foot and fading upward, green turning violet
         // toward its top, shimmering as light runs up it.

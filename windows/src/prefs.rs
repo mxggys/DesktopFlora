@@ -17,7 +17,7 @@ use snowhush_core::simulation::{Look, Mode};
 const KEY: PCWSTR = w!("Software\\DesktopFlora");
 const OLD_KEY: PCWSTR = w!("Software\\Snowhush");
 /// What falls by the number the registry keeps it as: new kinds only ever go on the end.
-const MODES: [Mode; 13] = Mode::ALL;
+const MODES: [Mode; 14] = Mode::ALL;
 
 /// Size and breeze choices, in the panel's order.
 pub const SIZES: [(&str, f32); 3] = [("Small", 0.7), ("Normal", 1.0), ("Large", 1.45)];
@@ -98,6 +98,16 @@ pub struct Settings {
     pub fade_while_typing: bool,
     /// A fast cursor ploughs a wider trail through what lies and stirs up what it passes.
     pub cursor_trail: bool,
+    /// Frost grows in from the edges in freezing weather.
+    pub frost: bool,
+    /// The glass mists over in cold, damp weather; a quick swipe wipes it.
+    pub misted: bool,
+    /// The moon shows at night, in its phase.
+    pub moon: bool,
+    /// Hides while the microphone or camera is in use, as in a call.
+    pub calls: bool,
+    /// Rain or snow due within the hour starts with a few drops or flakes.
+    pub heads_up: bool,
     /// At most `ECO_RATE` frames a second.
     pub eco: bool,
 }
@@ -172,6 +182,11 @@ impl Settings {
             }),
             fade_while_typing: read(w!("fadeWhileTyping")).is_some_and(|v| v != 0),
             cursor_trail: read(w!("cursorTrail")).is_none_or(|v| v != 0),
+            frost: read(w!("frost")).is_none_or(|v| v != 0),
+            misted: read(w!("misted")).is_none_or(|v| v != 0),
+            moon: read(w!("moon")).is_none_or(|v| v != 0),
+            calls: read(w!("pauseInCalls")).is_none_or(|v| v != 0),
+            heads_up: read(w!("headsUp")).is_none_or(|v| v != 0),
             eco: read(w!("eco")).is_some_and(|v| v != 0),
         }
     }
@@ -214,6 +229,11 @@ impl Settings {
         }
         write(w!("fadeWhileTyping"), self.fade_while_typing as u32);
         write(w!("cursorTrail"), self.cursor_trail as u32);
+        write(w!("frost"), self.frost as u32);
+        write(w!("misted"), self.misted as u32);
+        write(w!("moon"), self.moon as u32);
+        write(w!("pauseInCalls"), self.calls as u32);
+        write(w!("headsUp"), self.heads_up as u32);
         write(w!("eco"), self.eco as u32);
     }
 

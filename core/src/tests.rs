@@ -1556,3 +1556,99 @@ fn a_pinch_still_shows_something() {
         assert!(falling > 0 && falling < 400, "{mode:?} at {amount}: {falling} drawn");
     }
 }
+
+fn sprites_of(simulation: &SnowSimulation) -> Vec<Sprite> {
+    let mut sprites = vec![Sprite::default(); simulation.sprite_count()];
+    let count = simulation.write_sprites(&mut sprites);
+    sprites.truncate(count);
+    sprites
+}
+
+#[test]
+fn frost_grows_in_from_the_edges_and_then_rests() {
+    use crate::simulation::{Atmosphere, Mode};
+    let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.0);
+    simulation.set_mode(Mode::Snow);
+    simulation.set_atmosphere(Atmosphere { frost: 1.0, ..Atmosphere::default() });
+    run(&mut simulation, 20.0, AWAY);
+    let early = simulation.sprite_count();
+    run(&mut simulation, 90.0, AWAY);
+    let grown = simulation.sprite_count();
+    assert!(early > 0 && grown > early * 2, "early {early}, grown {grown}");
+    // Grown, it is nowhere near the middle of the screen, and it doesn't keep the screen redrawing.
+    assert!(sprites_of(&simulation).iter().all(|s| (s.position.x < 300.0 || s.position.x > 900.0) || (s.position.y < 220.0 || s.position.y > 580.0)));
+    assert!(!simulation.step(DT, AWAY), "still frost redraws the screen");
+    simulation.set_atmosphere(Atmosphere::default());
+    run(&mut simulation, 25.0, AWAY);
+    assert_eq!(simulation.sprite_count(), 0, "frost didn't thaw");
+}
+
+#[test]
+fn a_quick_swipe_wipes_the_mist_and_it_mists_over_again() {
+    use crate::simulation::Atmosphere;
+    let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.0);
+    simulation.set_atmosphere(Atmosphere { mist: 1.0, ..Atmosphere::default() });
+    run(&mut simulation, 50.0, AWAY);
+    let misted = simulation.sprite_count();
+    assert!(misted > 500, "only {misted} patches");
+    // A slow cursor leaves it.
+    for n in 0..60 {
+        simulation.step(DT, V2::new(400.0 + n as f32, 400.0));
+    }
+    assert_eq!(simulation.sprite_count(), misted, "a slow cursor wiped the mist");
+    for n in 0..30 {
+        simulation.step(DT, V2::new(100.0 + n as f32 * 30.0, 400.0));
+    }
+    let wiped = simulation.sprite_count();
+    assert!(wiped < misted - 40, "a swipe wiped only {} patches", misted - wiped);
+    run(&mut simulation, 50.0, AWAY);
+    assert_eq!(simulation.sprite_count(), misted, "the wiped glass didn't mist over again");
+}
+
+#[test]
+fn drops_stay_on_the_glass_after_rain_and_dry() {
+    use crate::simulation::Mode;
+    let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.75);
+    simulation.set_mode(Mode::Rain);
+    run(&mut simulation, 40.0, AWAY);
+    simulation.set_mode(Mode::Stars);
+    run(&mut simulation, 1.0, AWAY);
+    let drops = sprites_of(&simulation).iter().filter(|s| s.petal == 6.0).count();
+    assert!(drops > 20, "only {drops} drops left on the glass");
+    run(&mut simulation, 260.0, AWAY);
+    assert_eq!(sprites_of(&simulation).iter().filter(|s| s.petal == 6.0).count(), 0, "the drops never dried");
+}
+
+#[test]
+fn the_moon_shows_in_its_phase() {
+    use crate::simulation::Atmosphere;
+    let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.0);
+    simulation.set_atmosphere(Atmosphere { moon: Some(0.3), ..Atmosphere::default() });
+    run(&mut simulation, 8.0, AWAY);
+    let moon: Vec<Sprite> = sprites_of(&simulation).into_iter().filter(|s| s.petal == 5.0).collect();
+    assert_eq!(moon.len(), 1);
+    assert!((moon[0].lump - 0.3).abs() < 1e-4 && moon[0].position.y > 600.0);
+    assert!(!simulation.step(DT, AWAY), "the moon keeps the screen redrawing");
+}
+
+#[test]
+fn dandelion_seeds_float_and_spindrift_streams_in_a_gale() {
+    use crate::simulation::{Look, Mode};
+    let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.6);
+    simulation.set_mode(Mode::Pollen);
+    run(&mut simulation, 10.0, AWAY);
+    assert!(sprites_of(&simulation).iter().any(|s| s.petal == 2.0), "no seeds");
+    assert_finite(&simulation);
+
+    let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.8);
+    simulation.set_mode(Mode::Snow);
+    run(&mut simulation, 60.0, AWAY);
+    simulation.set_look(Look { size: 1.0, wind: 3.0, palette: Vec::new() });
+    let mut streamed = 0;
+    for _ in 0..(60.0 / DT) as usize {
+        simulation.step(DT, AWAY);
+        streamed = streamed.max(simulation.weathering_powder());
+    }
+    assert!(streamed > 20, "only {streamed} grains of spindrift");
+    assert_finite(&simulation);
+}

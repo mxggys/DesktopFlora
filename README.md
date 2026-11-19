@@ -8,7 +8,11 @@ It is based on [Snowhush](https://github.com/mbezruchko/Snowhush) by Mykhailo Be
 
 🌧️ Dynamic Weather Integration: Follows the weather outside (rain, snow and how heavy it is, wind) and, under a dry sky, the season where you live: snow in winter, blossoms in spring, stars in summer, leaves in autumn.
 
-❄️ Thirteen kinds of weather: snow that piles up and slides off windows, autumn leaves drawn from photos, rain running down your windows, cherry blossoms, twinkling stars, thunderstorms with lightning, drifting fog, tumbling confetti, fireworks, bouncing hail fireflies that shy away from the cursor, northern lights rippling over the sky and a sandstorm sweeping dust and leaves across the screen. Mix two, or turn on Halloween. Shake a window and everything lying on it falls off; sweep the mouse fast and it ploughs a trail through the snow and whirls up leaves, sand and confetti.
+❄️ Fourteen kinds of weather: snow that piles up and slides off windows, autumn leaves drawn from photos, rain running down your windows, cherry blossoms, twinkling stars, thunderstorms with lightning, drifting fog, tumbling confetti, fireworks, bouncing hail fireflies that shy away from the cursor, northern lights rippling over the sky and a sandstorm sweeping dust and leaves across the screen, and dandelion seeds floating on summer air. Mix two, or turn on Halloween. Shake a window and everything lying on it falls off; sweep the mouse fast and it ploughs a trail through the snow and whirls up leaves, sand and confetti.
+
+🪟 The weather on the glass: frost flowers grow in from the edges when it freezes, the screen mists over in cold, damp weather (a quick swipe wipes it), drops stay on the glass after rain and dry, the real moon shows at night in its phase, and fine snow streams along the drifts in a strong wind.
+
+🔕 Pauses itself in calls while the microphone or camera is in use, and gives a heads-up with a few drops when rain is due within the hour.
 
 🎨 Modern & Clean UI: Snowhush's tray menu on frosted glass for the quick things, and a Settings window laid out like Windows 11's own, with big cards grouped under clear headings on five scrollable pages: overview, look, behaviour, programs & shortcuts, about.
 
