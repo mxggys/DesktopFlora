@@ -162,6 +162,10 @@ impl Mode {
         match self {
             Mode::AutumnStorm => 1.0,
             Mode::BlossomWind => 0.55,
+            // Even a plain fall has the odd gust in it.
+            Mode::Storm => 0.5,
+            Mode::Rain | Mode::Sleet | Mode::Autumn => 0.2,
+            Mode::Snow | Mode::Blossom => 0.12,
             _ => 0.0,
         }
     }
@@ -919,7 +923,12 @@ impl SnowSimulation {
 
     /// Returns whether anything visible changed.
     pub fn step(&mut self, dt: f32, cursor: V2) -> bool {
+        let before = self.air.clock;
         self.air.clock += dt as f64;
+        // The showers swell and ebb: what falls is recounted every couple of seconds.
+        if (self.air.clock * 0.5).floor() != (before * 0.5).floor() {
+            self.update_target();
+        }
         let was_moving = self.moving() || self.haunting.moving();
         self.air.heights_changed = false;
 
@@ -1904,8 +1913,13 @@ impl SnowSimulation {
         let falling = per_megapoint * self.density * self.width * self.height / 1_000_000.0;
         let count = self.air.modes.len() as f32;
         self.air.targets = [0; MODES];
+        let shower = showers(self.air.clock);
         for &mode in &self.air.modes {
-            self.air.targets[mode.index()] = (falling * share_of(mode) / count) as usize;
+            // Rain comes in showers, heavier and lighter by turns; snow and the rest only a little unevenly.
+            // A third of the rain falls far off and never reaches the glass: that much more falls, so as much as
+            // before runs down the windows.
+            let swell = if mode.rainy() { shower * 1.4 } else { 1.0 + (shower - 1.0) * 0.4 };
+            self.air.targets[mode.index()] = (falling * share_of(mode) * swell / count) as usize;
         }
         self.target_flakes = self.air.targets.iter().sum();
     }
@@ -2929,20 +2943,31 @@ impl Air {
     fn make_raindrop(&mut self, width: f32, y: f32) -> Flake {
         let wind = self.wind_speed();
         let random = &mut self.random;
-        let depth = random.next().powf(1.5);
-        let fall_speed = 650.0 + depth * 550.0 + random.range(0.0, 80.0);
+        // Rain falls at every distance: a third far off, hair-thin and faint, gone before it reaches anything; most in
+        // the middle; now and then one right in front, thick, out of focus and fast.
+        let tier = random.next();
+        let (depth, size, alpha, soft, settles) = if tier < 0.33 {
+            let depth = random.next() * 0.12;
+            (depth, 0.5 + depth, 0.05 + random.range(0.0, 0.04), 0.4, false)
+        } else if tier < 0.975 {
+            let depth = 0.12 + 0.88 * random.next().powf(1.5);
+            (depth, 0.8 + depth * 0.9, 0.12 + depth * 0.22, 0.6, true)
+        } else {
+            (1.0, random.range(2.2, 3.0), random.range(0.1, 0.16), 1.0, false)
+        };
+        let fall_speed = if tier >= 0.975 { random.range(1450.0, 1700.0) } else { 520.0 + depth * 680.0 + random.range(0.0, 80.0) };
         Flake {
             position: V2::new(random.range(-30.0, width + 30.0), y),
             velocity: V2::new(wind * 3.0 * (0.35 + 0.65 * depth), -fall_speed),
             fall_speed,
-            size: 0.8 + depth * 0.9,
+            size,
             depth,
-            alpha: 0.12 + depth * 0.22,
-            soft: 0.6,
+            alpha,
+            soft,
             phase: 0.0,
             sway_rate: 0.0,
             sway_amount: 0.0,
-            settles: true,
+            settles,
             mass: 1.0,
             tint: [1.0; 3],
             tint_amount: 0.0,
@@ -3306,6 +3331,12 @@ fn share_of(mode: Mode) -> f32 {
     } else {
         1.0
     }
+}
+
+/// How much heavier or lighter than its average it falls just now, in slow swells that never repeat quite the same.
+fn showers(clock: f64) -> f32 {
+    let t = clock as f32;
+    (1.0 + 0.24 * (t * 0.045).sin() + 0.16 * (t * 0.11 + 1.3).sin() + 0.08 * (t * 0.29 + 4.0).sin()).clamp(0.45, 1.4)
 }
 
 fn jolt_scale(height: f32) -> f32 {
