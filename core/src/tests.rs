@@ -1544,3 +1544,15 @@ fn a_fast_cursor_kicks_lying_confetti_back_up() {
     assert!(before > 20 && after < before / 2, "lying before {before}, after sweeping {after}");
     assert_finite(&simulation);
 }
+
+#[test]
+fn a_pinch_still_shows_something() {
+    use crate::simulation::Mode;
+    for (mode, amount) in [(Mode::Autumn, 0.08), (Mode::Snow, 0.04), (Mode::Blossom, 0.05), (Mode::Stars, 0.10)] {
+        let mut simulation = SnowSimulation::new(1600.0, 900.0, amount);
+        simulation.set_mode(mode);
+        run(&mut simulation, 20.0, AWAY);
+        let falling = simulation.sprite_count();
+        assert!(falling > 0 && falling < 400, "{mode:?} at {amount}: {falling} drawn");
+    }
+}

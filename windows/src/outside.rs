@@ -2,6 +2,10 @@
 //! Without a location, the seasons follow the country Windows is set to.
 
 use windows::Devices::Geolocation::{GeolocationAccessStatus, Geolocator, PositionAccuracy};
+use windows::Foundation::TimeSpan;
+
+/// A second, in the hundred-nanosecond ticks of a `TimeSpan`.
+const SECOND: i64 = 10_000_000;
 use windows::Win32::Globalization::{GEO_FRIENDLYNAME, GEO_LATITUDE, GEOCLASS_NATION, GetGeoInfoW, GetUserGeoID};
 
 use snowhush_core::weather::{Conditions, conditions, forecast_path};
@@ -42,15 +46,18 @@ fn locate() -> Result<(f64, f64), String> {
     if access != GeolocationAccessStatus::Allowed {
         return Err(denied());
     }
-    let locator = Geolocator::new().map_err(|error| error.message())?;
-    // The town is enough for the weather; no need to wake GPS.
-    let _ = locator.SetDesiredAccuracy(PositionAccuracy::Default);
-    let position = locator
-        .GetGeopositionAsync()
-        .and_then(|operation| operation.join())
-        .and_then(|position| position.Coordinate())
-        .and_then(|coordinate| coordinate.Point())
-        .and_then(|point| point.Position())
-        .map_err(|_| denied())?;
+    // A fresh fix from Wi-Fi or GPS, no older than ten minutes, finds the street rather than the region an internet
+    // address points to; if none comes within fifteen seconds, whatever Windows already knows will do.
+    let fix = |accuracy: PositionAccuracy, age: i64, timeout: i64| {
+        let locator = Geolocator::new()?;
+        locator.SetDesiredAccuracy(accuracy)?;
+        locator
+            .GetGeopositionAsyncWithAgeAndTimeout(TimeSpan { Duration: age * SECOND }, TimeSpan { Duration: timeout * SECOND })?
+            .join()?
+            .Coordinate()?
+            .Point()?
+            .Position()
+    };
+    let position = fix(PositionAccuracy::High, 10 * 60, 15).or_else(|_| fix(PositionAccuracy::Default, 60 * 60, 30)).map_err(|_| denied())?;
     Ok((position.Latitude, position.Longitude))
 }

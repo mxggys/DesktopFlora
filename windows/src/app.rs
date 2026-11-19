@@ -37,7 +37,7 @@ use crate::update::{self, Release};
 use crate::welcome::{self, Handlers};
 use snowhush_core::simulation::{Look, Mode};
 use snowhush_core::text::{self, tr};
-use snowhush_core::weather::{Conditions, LIGHT, season};
+use snowhush_core::weather::{Conditions, season};
 
 const CLASS: PCWSTR = w!("DesktopFloraController");
 const TITLE: PCWSTR = w!("DesktopFlora");
@@ -52,7 +52,8 @@ const TIMER_CLICK: usize = 5;
 const WM_UPDATE: u32 = WM_APP + 2;
 const WM_WEATHER: u32 = WM_APP + 3;
 const WM_INSTALLED: u32 = WM_APP + 4;
-const WEATHER_INTERVAL: u32 = 30 * 60 * 1000;
+/// Open-Meteo works out the weather now every quarter of an hour.
+const WEATHER_INTERVAL: u32 = 15 * 60 * 1000;
 /// The shell's message for a click on the tray notification.
 const NIN_BALLOONUSERCLICK: u32 = WM_USER + 5;
 /// How often DesktopFlora looks for a new version, after the first look shortly after it starts.
@@ -437,10 +438,10 @@ fn effective(app: &App, month: u32) -> (u32, Vec<Mode>, f32) {
     let latitude = app.outside.filter(|_| settings.local_weather).map_or(app.home.1, |(_, latitude)| latitude);
     let seasonal = season(month, latitude);
     match app.outside {
-        Some((outside, _)) if settings.local_weather => {
-            // Under a dry sky the season's weather falls lightly instead: leaves in autumn, stars on summer nights.
-            let (intensity, mode) = outside.falling.unwrap_or((LIGHT, seasonal));
-            (intensity, vec![mode], outside.wind)
+        Some((sky, _)) if settings.local_weather => {
+            // As it falls outside; under a dry sky, a pinch of the season's weather, and the stars on a clear night.
+            let (intensity, modes) = snowhush_core::weather::outside(month, latitude, &sky);
+            (intensity, modes, sky.wind)
         }
         _ if settings.local_weather || settings.seasonal => (settings.intensity, vec![seasonal], 1.0),
         _ => (settings.intensity, settings.modes(), 1.0),
@@ -726,8 +727,10 @@ fn accumulate(settings: &Settings, heaps: bool, drawn: bool) -> Vec<Entry> {
 
 /// A line under Mode on where what falls comes from, while it follows the season or the sky.
 fn status(app: &App, falling: &[Mode]) -> Option<String> {
-    let kind = falling.last().copied().unwrap_or(Mode::Snow);
-    let season_name = match kind {
+    let names = falling.iter().map(|&mode| mode_name(mode)).collect::<Vec<_>>().join(" + ");
+    let month = unsafe { GetLocalTime() }.wMonth as u32;
+    let latitude = app.outside.filter(|_| app.settings.local_weather).map_or(app.home.1, |(_, latitude)| latitude);
+    let season_name = match season(month, latitude) {
         Mode::Snow => t("Winter"),
         Mode::Blossom => t("Spring"),
         Mode::Stars => t("Summer"),
@@ -736,8 +739,8 @@ fn status(app: &App, falling: &[Mode]) -> Option<String> {
     };
     if app.settings.local_weather {
         Some(match app.outside {
-            Some((Conditions { falling: Some(_), .. }, _)) => fill_in(&t("Outside right now: {}"), &[mode_name(kind)]),
-            Some(_) => fill_in(&t("Dry outside: {} for the {}"), &[mode_name(kind), &season_name]),
+            Some((Conditions { falling: Some(_), .. }, _)) => fill_in(&t("Outside right now: {}"), &[&names]),
+            Some(_) => fill_in(&t("Dry outside: {} for the {}"), &[&names, &season_name]),
             None => t("Asking for the weather outside…"),
         })
     } else if app.settings.seasonal {
@@ -1032,10 +1035,13 @@ fn view() -> Option<View> {
             _ => String::new(),
         };
         let name = |mode: Mode| text::mode_name(mode).to_string();
+        let latitude = app.outside.filter(|_| settings.local_weather).map_or(app.home.1, |(_, latitude)| latitude);
+        let this_season = season(now.wMonth as u32, latitude);
+        let names = falling.iter().map(|&mode| name(mode)).collect::<Vec<_>>().join(" + ");
         let status = if settings.local_weather {
             let first = match app.outside {
-                Some((Conditions { falling: Some(_), .. }, _)) => fill_in(&t("Outside right now: {}"), &[&name(kind)]),
-                Some(_) => fill_in(&t("Dry outside: {} for the {}"), &[&name(kind), &season_name(kind)]),
+                Some((Conditions { falling: Some(_), .. }, _)) => fill_in(&t("Outside right now: {}"), &[&names]),
+                Some(_) => fill_in(&t("Dry outside: {} for the {}"), &[&names, &season_name(this_season)]),
                 None => t("Asking for the weather outside…"),
             };
             (first, t("Place: your location from Windows, rounded to about 1 km"))
