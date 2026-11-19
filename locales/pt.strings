@@ -66,6 +66,8 @@
 "setup.update" = "Atualizar";
 "setup.same" = "O DesktopFlora {old} já está aqui. Instalar a {version} de novo o repara.";
 "setup.reinstall" = "Reinstalar";
+"setup.older" = "Substitui o DesktopFlora {old} pela {version}, mais antiga.";
+"setup.downgrade" = "Reverter";
 "setup.installing" = "Instalando…";
 "setup.settle" = "Deixe assentar.";
 "setup.done" = "O DesktopFlora está instalado. Você o encontra no menu Iniciar.";

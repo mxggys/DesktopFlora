@@ -38,6 +38,7 @@ fn main() {
     prefs::migrate();
     snowhush::language::choose();
     log::start();
+    std::panic::set_hook(Box::new(|info| log!("panic on the {} thread: {info}", std::thread::current().name().unwrap_or("unnamed"))));
     log!("DesktopFlora {}", env!("CARGO_PKG_VERSION"));
     if let Err(error) = app::run() {
         log!("failed: {error}");

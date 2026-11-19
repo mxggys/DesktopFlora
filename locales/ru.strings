@@ -66,6 +66,8 @@
 "setup.update" = "Обновить";
 "setup.same" = "DesktopFlora {old} уже установлен. Повторная установка {version} его восстановит.";
 "setup.reinstall" = "Переустановить";
+"setup.older" = "Заменяет DesktopFlora {old} более старой версией {version}.";
+"setup.downgrade" = "Откатить";
 "setup.installing" = "Установка…";
 "setup.settle" = "Пусть уляжется.";
 "setup.done" = "DesktopFlora установлен. Он есть в меню «Пуск».";

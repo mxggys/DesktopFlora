@@ -74,6 +74,8 @@
 "setup.update" = "Update";
 "setup.same" = "DesktopFlora {old} is already here. Installing {version} again repairs it.";
 "setup.reinstall" = "Reinstall";
+"setup.older" = "Replaces DesktopFlora {old} with the older {version}.";
+"setup.downgrade" = "Downgrade";
 "setup.installing" = "Installing…";
 "setup.settle" = "Let it settle.";
 "setup.done" = "DesktopFlora is installed. You'll find it in the Start menu.";

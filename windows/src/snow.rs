@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::Receiver;
 
-use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, POINT, WPARAM};
+use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, POINT, RECT, WPARAM};
 use windows::Win32::System::ProcessStatus::EmptyWorkingSet;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
@@ -195,7 +195,9 @@ fn run_loop(commands: &Receiver<Command>, links: &Links, mut settings: Settings)
     // been seen that way or not.
     let mut full_screen: HashSet<String> = HashSet::new();
     let mut full_screen_seen: HashMap<String, (bool, i64)> = HashMap::new();
-    let mut screens = sync_screens(&gpu, &settings, &full_screen, Vec::new(), layer, false);
+    // The snow of displays whose overlay the device was lost in the middle of making, kept for the next device.
+    let mut stranded: HashMap<String, SnowSimulation> = HashMap::new();
+    let mut screens = sync_screens(&gpu, &settings, &full_screen, Vec::new(), &mut stranded, layer, false);
     let timer = unsafe {
         CreateWaitableTimerExW(None, PCWSTR::null(), CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS.0)
             .or_else(|_| CreateWaitableTimerW(None, false, PCWSTR::null()))?
@@ -203,6 +205,12 @@ fn run_loop(commands: &Receiver<Command>, links: &Links, mut settings: Settings)
     let wake = HANDLE(links.wake as _);
     let mut clock = Clock::new();
     let started = Clock::now();
+    // While the graphics card is lost: when to try making a new device, and how long to wait after that if it fails.
+    let mut recover_at: Option<i64> = None;
+    let mut backoff = clock.frequency;
+    // How long a failed frame waits before the overlays are made again: nothing at first, longer each time the frames
+    // after a recovery fail too, so a failure that a new device doesn't cure isn't retried on every frame.
+    let mut pause = 0;
     let mut active = true;
     let mut budget = PowerBudget::Full;
     let mut spooky = halloween::shows(&settings);
@@ -264,13 +272,15 @@ fn run_loop(commands: &Receiver<Command>, links: &Links, mut settings: Settings)
                 Command::BehindWindows(on) => {
                     settings.behind_windows = on;
                     layer = on.then(find_layer).flatten();
-                    screens = sync_screens(&gpu, &settings, &full_screen, screens, layer, true);
+                    screens = sync_screens(&gpu, &settings, &full_screen, screens, &mut stranded, layer, true);
+                    light_at = 0;
                 }
                 Command::OverFullScreen(on) => {
                     settings.over_full_screen = on;
                     if !on && !full_screen.is_empty() {
                         full_screen.clear();
-                        screens = sync_screens(&gpu, &settings, &full_screen, screens, layer, false);
+                        screens = sync_screens(&gpu, &settings, &full_screen, screens, &mut stranded, layer, false);
+                        light_at = 0;
                     }
                 }
                 Command::DeepInteraction(on) => {
@@ -285,12 +295,14 @@ fn run_loop(commands: &Receiver<Command>, links: &Links, mut settings: Settings)
                 }
                 Command::BehindTaskbar(on) => {
                     settings.behind_taskbar = on;
-                    screens = sync_screens(&gpu, &settings, &full_screen, screens, layer, true);
+                    screens = sync_screens(&gpu, &settings, &full_screen, screens, &mut stranded, layer, true);
+                    light_at = 0;
                 }
                 Command::ShellRestarted => {
                     if settings.behind_windows {
                         layer = find_layer();
-                        screens = sync_screens(&gpu, &settings, &full_screen, screens, layer, true);
+                        screens = sync_screens(&gpu, &settings, &full_screen, screens, &mut stranded, layer, true);
+                        light_at = 0;
                     }
                 }
                 Command::ShowInScreenshots(on) => {
@@ -391,7 +403,7 @@ fn run_loop(commands: &Receiver<Command>, links: &Links, mut settings: Settings)
             if settings.behind_windows {
                 layer = find_layer();
             }
-            screens = sync_screens(&gpu, &settings, &full_screen, screens, layer, false);
+            screens = sync_screens(&gpu, &settings, &full_screen, screens, &mut stranded, layer, false);
             clock.refresh();
             light_at = 0;
         }
@@ -402,6 +414,12 @@ fn run_loop(commands: &Receiver<Command>, links: &Links, mut settings: Settings)
         if now >= chores_at {
             chores_at = now + clock.frequency;
             clock.refresh();
+            if recover_at.is_none()
+                && let Err(reason) = gpu.removed()
+            {
+                log!("graphics device lost: {reason}");
+                recover_at = Some(now);
+            }
             // In case a display change went unannounced.
             let current = monitors(over_taskbar(&settings, &screens), &full_screen);
             if current.len() != screens.len() || screens.iter().any(|screen| !current.contains(&screen.monitor)) {
@@ -433,7 +451,8 @@ fn run_loop(commands: &Receiver<Command>, links: &Links, mut settings: Settings)
                 let found = find_layer();
                 if found.is_some() || screens.iter().any(|screen| !screen.alive()) {
                     layer = found;
-                    screens = sync_screens(&gpu, &settings, &full_screen, screens, layer, true);
+                    screens = sync_screens(&gpu, &settings, &full_screen, screens, &mut stranded, layer, true);
+                    light_at = 0;
                 }
             }
             if now >= light_at {
@@ -502,10 +521,19 @@ fn run_loop(commands: &Receiver<Command>, links: &Links, mut settings: Settings)
             let windows = settings.snow_on_windows.then_some(&tracker);
             lend(&mut screens, windows, now + clock.tolerance());
             let time = (clock.seconds(now - started) % 1000.0) as f32;
+            let lending: Vec<bool> = (0..screens.len())
+                .map(|index| {
+                    screens[index].behind_windows()
+                        && windows.is_some_and(|tracker| tracker.hides(&screens[index].monitor.rect) && lends(&screens, index, tracker))
+                })
+                .collect();
             let mut lost = false;
+            let mut drawn = false;
             let mut released = false;
             let mut reshaped = false;
-            for screen in screens.iter_mut().filter(|screen| screen.next_due <= now + clock.tolerance()) {
+            for (index, screen) in
+                screens.iter_mut().enumerate().filter(|(_, screen)| recover_at.is_none() && screen.next_due <= now + clock.tolerance())
+            {
                 let in_front = tracker.covering(&screen.monitor.bounds);
                 // Shown over a full-screen app, the snow reaches down to the bottom of the display while the app has put
                 // the taskbar away, so the drift lies along the bottom instead of over a taskbar no longer there; a
@@ -546,9 +574,18 @@ fn run_loop(commands: &Receiver<Command>, links: &Links, mut settings: Settings)
                     screen.next_due = now + clock.frequency / 4;
                     continue;
                 }
+                // Behind windows, the snow waits while one hides all of it, looking again soon enough to carry on
+                // before a window being restored uncovers much. A display lending a window's snow to another keeps
+                // it following the window.
+                if screen.behind_windows() && !lending[index] && tracker.hides(&screen.monitor.rect) {
+                    screen.resume();
+                    screen.next_due = now + clock.frequency / 10;
+                    continue;
+                }
                 let began = Clock::now();
                 match screen.frame(&gpu, &clock, now, budget, sky, time, windows) {
                     Ok(drew) => {
+                        drawn = true;
                         stats.frame(drew, Clock::now() - began, screen.simulation.sprite_count());
                         released |= screen.simulation.take_snowfall_released();
                     }
@@ -558,24 +595,52 @@ fn run_loop(commands: &Receiver<Command>, links: &Links, mut settings: Settings)
                     }
                 }
             }
-            pass_snow(&mut screens, &tracker);
+            pass_snow(&mut screens, &tracker, now);
             // The first display the welcome window's snow reaches starts the snowfall on all of them.
             if released {
                 settings.welcomed = true;
                 screens.iter_mut().for_each(|screen| screen.simulation.set_snowfall_held(false));
             }
             if lost {
-                screens.clear();
-                gpu = Gpu::new()?;
-                screens = sync_screens(&gpu, &settings, &full_screen, Vec::new(), layer, false);
+                recover_at = Some(now + pause);
             } else if reshaped {
-                screens = sync_screens(&gpu, &settings, &full_screen, screens, layer, false);
+                screens = sync_screens(&gpu, &settings, &full_screen, screens, &mut stranded, layer, false);
+                light_at = 0;
+            }
+            if drawn && !lost {
+                pause = 0;
             }
             now = Clock::now();
             stats.report(&clock, now, &mut tracker);
         }
 
-        let due = screens.iter().map(|screen| screen.next_due).min().filter(|_| active);
+        // A new device keeps every display's snow: only the overlays are made again. Right after a driver update or a
+        // reset one often can't be made for a while, so it is tried again later rather than given up on.
+        if let Some(at) = recover_at
+            && now >= at
+        {
+            match Gpu::new() {
+                Ok(fresh) => {
+                    log!("adapter: {}", fresh.adapter);
+                    gpu = fresh;
+                    screens = sync_screens(&gpu, &settings, &full_screen, screens, &mut stranded, layer, true);
+                    light_at = 0;
+                    recover_at = None;
+                    backoff = clock.frequency;
+                    pause = (pause * 2).clamp(clock.frequency, clock.frequency * 30);
+                }
+                Err(error) => {
+                    log!("graphics device unavailable: {error}");
+                    recover_at = Some(now + backoff);
+                    backoff = (backoff * 2).min(clock.frequency * 30);
+                }
+            }
+        }
+
+        let due = match recover_at {
+            Some(at) => Some(at.min(chores_at)),
+            None => screens.iter().map(|screen| screen.next_due).min().filter(|_| active),
+        };
         unsafe {
             if let Some(due) = due {
                 let wait = -(((due - now).max(0) as i128 * 10_000_000) / clock.frequency as i128) as i64;
@@ -605,9 +670,15 @@ fn sync_screens(
     settings: &Settings,
     full_screen: &HashSet<String>,
     mut current: Vec<Screen>,
+    stranded: &mut HashMap<String, SnowSimulation>,
     layer: Option<DesktopLayer>,
     rebuild: bool,
 ) -> Vec<Screen> {
+    // Overlays can't be made on a lost device: the displays keep their snow till a new one is.
+    if gpu.removed().is_err() {
+        return current;
+    }
+    let mut spare = std::mem::take(stranded);
     let mut result = Vec::new();
     let displays = monitors(over_taskbar(settings, &current), full_screen);
     for monitor in displays.iter().cloned() {
@@ -634,9 +705,17 @@ fn sync_screens(
                 }
                 simulation
             }
-            None => new_simulation(&monitor, settings),
+            None => match spare.remove(&monitor.name) {
+                Some(mut simulation) => {
+                    let (width, height) = dip_size(&monitor);
+                    simulation.resize(width as f32, height as f32);
+                    simulation
+                }
+                None => new_simulation(&monitor, settings),
+            },
         };
         log!("display {}: {:?}, {} dpi, {} Hz", monitor.name, monitor.rect, monitor.dpi, monitor.refresh);
+        let name = monitor.name.clone();
         let screen = Screen::new(gpu, monitor.clone(), simulation, settings, layer).or_else(|(error, simulation)| {
             // Snow that can't go behind windows stays on top of them rather than vanishing.
             if layer.is_none() {
@@ -647,7 +726,12 @@ fn sync_screens(
         });
         match screen {
             Ok(screen) => result.push(screen),
-            Err((error, _)) => log!("overlay failed: {error}"),
+            Err((error, simulation)) => {
+                log!("overlay failed: {error}");
+                if gpu.removed().is_err() {
+                    stranded.insert(name, simulation);
+                }
+            }
         }
     }
     for screen in &mut result {
@@ -702,31 +786,51 @@ fn lend(screens: &mut [Screen], tracker: Option<&Tracker>, due: i64) {
 /// lying across two displays keeps its drift in one piece instead of ending at the edge.
 fn borrowed(screens: &[Screen], index: usize, tracker: &Tracker) -> Vec<Borrowed> {
     let screen = &screens[index];
-    let here = &screen.monitor.rect;
-    let (width, height) = screen.size();
-    // The drift stands above the window's top edge, never as high as this.
-    let reach = (300.0 * screen.pixels_per_point()) as i32;
     let mut borrowed = Vec::new();
     for (&id, owner) in &tracker.owners {
         if *owner == screen.monitor.name {
             continue;
         }
-        let Some(r) = tracker.rect(id) else { continue };
-        let near = r.left < here.right && r.right > here.left && r.top - reach < here.bottom && r.top + 20 > here.top;
-        let Some(home) = screens.iter().find(|other| other.monitor.name == *owner).filter(|_| near) else { continue };
-        let Some(lent) = home.simulation.lend(id) else { continue };
-        let lent = lent.mapped(mapping(home, screen));
-        let [left, bottom, right, top] = lent.bounds();
-        if right > 0.0 && left < width as f32 && top > 0.0 && bottom < height as f32 {
-            borrowed.push(lent);
-        }
+        let Some(home) = screens.iter().find(|other| other.monitor.name == *owner) else { continue };
+        borrowed.extend(lent(home, screen, id, tracker));
     }
     borrowed
 }
 
+/// The snow `home` keeps for window `id`, in the coordinates of `screen`, when it shows there.
+fn lent(home: &Screen, screen: &Screen, id: isize, tracker: &Tracker) -> Option<Borrowed> {
+    let r = tracker.rect(id)?;
+    if !reaches(&r, screen) {
+        return None;
+    }
+    let lent = home.simulation.lend(id)?.mapped(mapping(home, screen));
+    let (width, height) = screen.size();
+    let [left, bottom, right, top] = lent.bounds();
+    (right > 0.0 && left < width as f32 && top > 0.0 && bottom < height as f32).then_some(lent)
+}
+
+/// Whether the drift on a window with these bounds may show on `screen`.
+fn reaches(r: &RECT, screen: &Screen) -> bool {
+    let here = &screen.monitor.rect;
+    // The drift stands above the window's top edge, never as high as this.
+    let reach = (300.0 * screen.pixels_per_point()) as i32;
+    r.left < here.right && r.right > here.left && r.top - reach < here.bottom && r.top + 20 > here.top
+}
+
+/// Whether display `index` keeps the snow of a window that shows on another display, which draws it from there.
+fn lends(screens: &[Screen], index: usize, tracker: &Tracker) -> bool {
+    let home = &screens[index];
+    tracker
+        .owners
+        .iter()
+        .filter(|(_, owner)| **owner == home.monitor.name)
+        .any(|(&id, _)| screens.iter().enumerate().any(|(other, screen)| other != index && lent(home, screen, id, tracker).is_some()))
+}
+
 /// Passes on the snow that went from one display to another this frame: snow that fell on a window's drift lent by
 /// another display goes to that one, and snow thrown past an edge two displays share goes on falling on the other side.
-fn pass_snow(screens: &mut [Screen], tracker: &Tracker) {
+/// A display resting wakes for what it gets.
+fn pass_snow(screens: &mut [Screen], tracker: &Tracker, now: i64) {
     for index in 0..screens.len() {
         for caught in screens[index].simulation.take_caught() {
             let Some(home) = tracker.owners.get(&caught.id).and_then(|owner| screens.iter().position(|screen| screen.monitor.name == *owner)) else {
@@ -734,6 +838,7 @@ fn pass_snow(screens: &mut [Screen], tracker: &Tracker) {
             };
             let mapping = mapping(&screens[index], &screens[home]);
             screens[home].simulation.catch(&caught, mapping);
+            screens[home].stir(now);
         }
         let strays = screens[index].simulation.take_strays();
         if strays.is_empty() {
@@ -758,6 +863,7 @@ fn pass_snow(screens: &mut [Screen], tracker: &Tracker) {
         for (next, strays) in passed {
             let mapping = mapping(&screens[index], &screens[next]);
             screens[next].simulation.adopt_strays(strays, mapping);
+            screens[next].stir(now);
         }
     }
 }

@@ -145,6 +145,9 @@ pub(super) struct Extras {
     next_burst: f64,
     aurora: Aurora,
     haze: Vec<Puff>,
+    /// The fine spray heavy rain hangs low over the ground in, and how far a storm has darkened the sky.
+    mist: Vec<Puff>,
+    gloom: f32,
     grains: Vec<Grain>,
     debris: Vec<Debris>,
 }
@@ -163,6 +166,8 @@ impl Default for Extras {
             next_burst: 0.5,
             aurora: Aurora::default(),
             haze: Vec::new(),
+            mist: Vec::new(),
+            gloom: 0.0,
             grains: Vec::new(),
             debris: Vec::new(),
         }
@@ -179,6 +184,8 @@ impl Extras {
             + if self.lightning.brightness > 0.01 { self.lightning.path.len() * 2 + 2 } else { 0 }
             + if self.aurora.shown > 0.0 { self.aurora.curtains.len() * 120 } else { 0 }
             + self.haze.len()
+            + self.mist.len()
+            + if self.gloom > 0.0 { 3 } else { 0 }
             + self.grains.len()
             + self.debris.len()
     }
@@ -245,6 +252,40 @@ impl SnowSimulation {
             }
         }
         e.fog.retain(|puff| puff.shown > 0.0 || fog_wanted);
+
+        // Rain: the spray it raises hangs low over the ground as a faint mist, thicker the harder it rains; a storm
+        // darkens the sky as it gathers and lets it lighten again as it passes.
+        let rain_wanted = wants(Mode::Rain) || wants(Mode::Storm);
+        let mist_target = if rain_wanted { ((3.0 + 9.0 * amount) * area).min(30.0) as usize } else { 0 };
+        while e.mist.len() < mist_target {
+            let random = &mut e.random;
+            let radius = random.range(140.0, 260.0);
+            e.mist.push(Puff {
+                position: V2::new(random.range(-radius, width + radius), random.range(-radius * 0.35, radius * 0.25)),
+                velocity: random.range(4.0, 10.0) * if random.next() < 0.5 { -1.0 } else { 1.0 },
+                radius,
+                alpha: random.range(0.035, 0.07) * (0.4 + 0.6 * amount) * if wants(Mode::Storm) { 1.4 } else { 1.0 },
+                shown: 0.0,
+                phase: random.range(0.0, TAU),
+            });
+        }
+        for (i, puff) in e.mist.iter_mut().enumerate() {
+            let keep = i < mist_target;
+            puff.shown = (puff.shown + dt / if keep { 5.0 } else { -2.5 }).clamp(0.0, 1.0);
+            puff.phase += dt * 0.2;
+            puff.position.x += (puff.velocity + wind * 0.4) * dt;
+            if puff.position.x < -puff.radius * 1.2 {
+                puff.position.x = width + puff.radius;
+            } else if puff.position.x > width + puff.radius * 1.2 {
+                puff.position.x = -puff.radius;
+            }
+        }
+        e.mist.retain(|puff| puff.shown > 0.0 || mist_target > 0);
+        let gloom_target = if wants(Mode::Storm) { 0.5 + 0.5 * amount } else { 0.0 };
+        e.gloom += (gloom_target - e.gloom) * (dt / 6.0).min(1.0);
+        if e.gloom < 0.005 && gloom_target == 0.0 {
+            e.gloom = 0.0;
+        }
 
         // Fireflies: wandering, shying from the cursor, kept to the lower part of the screen.
         let glow_target = if wants(Mode::Fireflies) { ((8.0 + 24.0 * amount) * area).min(80.0) as usize } else { 0 };
@@ -621,7 +662,25 @@ impl SnowSimulation {
         };
         let fog = self.extras.fog.iter().map(puff([0.86, 0.88, 0.92]));
         let haze = self.extras.haze.iter().map(puff([0.84, 0.68, 0.46]));
-        self.aurora_sprites().chain(fog).chain(haze)
+        let mist = self.extras.mist.iter().map(puff([0.78, 0.82, 0.88]));
+        // A storm's heavy cloud: three broad dark shadows over the top of the screen, faint enough to keep the
+        // desktop readable, drifting slowly. Lightning lights the sky over them.
+        let gloom = self.extras.gloom;
+        let (width, height) = (self.width, self.height);
+        let t = self.air.clock as f32;
+        let clouds = (0..3).filter(move |_| gloom > 0.0).map(move |k| {
+            let k = k as f32;
+            Sprite {
+                position: V2::new(width * (0.2 + 0.3 * k) + (t * 0.01 + k * 2.1).sin() * width * 0.08, height * (1.02 - 0.03 * k)),
+                size: width.max(height) * 1.1,
+                alpha: 0.2 * gloom * opacity,
+                soft: 1.0,
+                tint_amount: 1.0,
+                tint: [0.06, 0.07, 0.1],
+                ..Sprite::default()
+            }
+        });
+        clouds.chain(self.aurora_sprites()).chain(fog).chain(haze).chain(mist)
     }
 
     /// Each curtain of northern lights as a row of soft rays standing on its rippling lower edge, brighter here and

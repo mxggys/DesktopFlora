@@ -49,9 +49,9 @@ fn ours(key: PCWSTR) -> bool {
     read_string(key, w!("DisplayName")).is_some_and(|name| name == "DesktopFlora")
 }
 
-/// Puts the app in place and registers it, replacing a running or older copy. Returns where the app went.
+/// Puts the app in place and registers it, replacing an older copy. Returns where the app went.
+/// A running copy holds on to its file, so callers close it with `close_running` first.
 pub fn install(app: &[u8], version: &str) -> Result<PathBuf, String> {
-    close_running();
     let previous = read_string(UNINSTALL, w!("InstallLocation"))
         .or_else(|| ours(OLD_UNINSTALL).then(|| read_string(OLD_UNINSTALL, w!("InstallLocation"))).flatten());
     // Registered under the original Snowhush's name by an earlier version: that entry goes, this one replaces it.
@@ -147,17 +147,18 @@ pub fn launch(exe: &Path) {
     }
 }
 
-/// Asks a running Snowhush to quit and waits a few seconds for it to go.
-fn close_running() {
-    close(CONTROLLER);
+/// Asks a running DesktopFlora to quit and waits a few seconds for it to go. Returns whether one was running.
+pub fn close_running() -> bool {
+    let mut closed = close(CONTROLLER);
     // A DesktopFlora from before 0.18, by its old class; never the original Snowhush, which has the same one.
     unsafe {
         if let Ok(window) = FindWindowW(OLD_CONTROLLER, PCWSTR::null())
             && process_path(window).is_some_and(|path| path.to_lowercase().contains("desktopflora"))
         {
-            close(OLD_CONTROLLER);
+            closed |= close(OLD_CONTROLLER);
         }
     }
+    closed
 }
 
 /// The executable the process owning `window` runs.
@@ -175,9 +176,9 @@ fn process_path(window: windows::Win32::Foundation::HWND) -> Option<String> {
     }
 }
 
-fn close(class: PCWSTR) {
+fn close(class: PCWSTR) -> bool {
     unsafe {
-        let Ok(window) = FindWindowW(class, PCWSTR::null()) else { return };
+        let Ok(window) = FindWindowW(class, PCWSTR::null()) else { return false };
         let mut process = 0;
         GetWindowThreadProcessId(window, Some(&mut process));
         let handle = OpenProcess(PROCESS_SYNCHRONIZE, false, process).ok();
@@ -189,6 +190,7 @@ fn close(class: PCWSTR) {
             let _ = CloseHandle(handle);
         }
     }
+    true
 }
 
 fn shortcut(target: &Path, at: &Path) -> windows::core::Result<()> {
