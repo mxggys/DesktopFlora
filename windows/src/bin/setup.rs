@@ -19,7 +19,7 @@ use snowhush_core::text::{self, tr};
 /// The app this installer carries, built before it.
 const APP: &[u8] = include_bytes!(env!("SNOWHUSH_APP"));
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-const CLASS: PCWSTR = w!("SnowhushSetup");
+const CLASS: PCWSTR = w!("DesktopFloraSetup");
 const WIDTH: f32 = 400.0;
 const HEIGHT: f32 = 380.0;
 

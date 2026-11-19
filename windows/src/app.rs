@@ -39,7 +39,7 @@ use snowhush_core::simulation::{Look, Mode};
 use snowhush_core::text::{self, tr};
 use snowhush_core::weather::{Conditions, LIGHT, season};
 
-const CLASS: PCWSTR = w!("SnowhushController");
+const CLASS: PCWSTR = w!("DesktopFloraController");
 const TITLE: PCWSTR = w!("DesktopFlora");
 const WM_TRAY: u32 = WM_APP + 1;
 const NIN_KEYSELECT: u32 = NIN_SELECT | 1;
@@ -634,9 +634,10 @@ fn entries(sliders: bool) -> Option<Vec<Entry>> {
             }
         };
         let mut modes = vec![Entry::toggle(ID_MIXED, tr("mixed"), settings.mixed && chosen, true), Entry::Separator];
-        // Snowhush's kinds first; DesktopFlora's own fold out under More Weather, so the list stays short.
+        // All in one list, no submenu inside the submenu: what settles first, then what only passes by.
         modes.extend(Mode::ALL[..5].iter().map(|&mode| kind(mode)));
-        modes.push(Entry::Submenu { label: t("More Weather"), entries: Mode::ALL[5..].iter().map(|&mode| kind(mode)).collect() });
+        modes.push(Entry::Separator);
+        modes.extend(Mode::ALL[5..].iter().map(|&mode| kind(mode)));
         modes.extend([
             Entry::Separator,
             Entry::choice(ID_SEASONAL, &t("Season"), settings.seasonal && !settings.local_weather),
@@ -650,7 +651,10 @@ fn entries(sliders: bool) -> Option<Vec<Entry>> {
         // Rain and stars don't lie anywhere: nothing to keep, melt or clear.
         let heaps: Vec<Mode> = falling.iter().copied().filter(|mode| mode.heaps()).collect();
         let amount = if intensity == 0 { tr("off").to_string() } else { format!("{intensity}%") };
-        let mut entries = vec![Entry::header("DesktopFlora"), Entry::toggle(ID_PAUSE, &t("Snow on"), !settings.paused, true), Entry::Separator];
+        // The header says what falls now, so a glance at the menu tells.
+        let now_falling = falling.iter().map(|&mode| mode_name(mode).to_string()).collect::<Vec<_>>().join(" + ");
+        let title = if settings.paused || now_falling.is_empty() { "DesktopFlora".to_string() } else { format!("DesktopFlora · {now_falling}") };
+        let mut entries = vec![Entry::header(&title), Entry::toggle(ID_PAUSE, &t("Weather on"), !settings.paused, true), Entry::Separator];
         if sliders {
             entries.extend([
                 Entry::header(tr("intensity")),
@@ -1072,6 +1076,34 @@ fn act(action: Action) {
             let on = !prefs::opens_at_login();
             let status = prefs::set_opens_at_login(on);
             log!("open at login {on}: {status:?}");
+            return;
+        }
+        // Over full-screen games needs the snow in front of the windows; behind them, a game would cover it.
+        Action::OverFullScreen | Action::BehindWindows => {
+            let commands = APP.with_borrow_mut(|app| {
+                let settings = &mut app.as_mut()?.settings;
+                let mut commands = Vec::new();
+                if matches!(action, Action::OverFullScreen) {
+                    settings.over_full_screen = !settings.over_full_screen;
+                    if settings.over_full_screen && settings.behind_windows {
+                        settings.behind_windows = false;
+                        commands.push(Command::BehindWindows(false));
+                    }
+                    commands.push(Command::OverFullScreen(settings.over_full_screen));
+                } else {
+                    settings.behind_windows = !settings.behind_windows;
+                    if settings.behind_windows && settings.over_full_screen {
+                        settings.over_full_screen = false;
+                        commands.push(Command::OverFullScreen(false));
+                    }
+                    commands.push(Command::BehindWindows(settings.behind_windows));
+                }
+                settings.save();
+                Some(commands)
+            });
+            for command in commands.into_iter().flatten() {
+                with_app(|app| send(app, command));
+            }
             return;
         }
         Action::Exclude => {

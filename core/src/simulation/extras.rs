@@ -125,7 +125,9 @@ enum SparkKind {
 /// A stroke of lightning: its path down the sky, how bright it is now, and when it flickers again.
 #[derive(Default)]
 struct Lightning {
-    path: Vec<V2>,
+    /// Points along the stroke, close enough to read as a line, each with how thick it is there: the main channel
+    /// thick and tapering, its branches thin.
+    path: Vec<(V2, f32)>,
     brightness: f32,
     flicker_at: Option<f64>,
     x: f32,
@@ -174,7 +176,7 @@ impl Extras {
             + self.confetti.len()
             + self.hail.len()
             + self.sparks.len()
-            + if self.lightning.brightness > 0.01 { self.lightning.path.len() + 1 } else { 0 }
+            + if self.lightning.brightness > 0.01 { self.lightning.path.len() * 2 + 2 } else { 0 }
             + if self.aurora.shown > 0.0 { self.aurora.curtains.len() * 120 } else { 0 }
             + self.haze.len()
             + self.grains.len()
@@ -735,13 +737,36 @@ impl SnowSimulation {
             tint: [0.82, 0.88, 1.0],
             ..Sprite::default()
         });
-        let bolt = e.lightning.path.iter().filter(move |_| shown).map(move |&point| Sprite {
+        // A white-hot core along the stroke, in a violet-blue glow that is wider and fainter; a glow too where it
+        // strikes.
+        let bolt = e.lightning.path.iter().enumerate().filter(move |_| shown).flat_map(move |(i, &(point, thick))| {
+            let glow = (i % 3 == 0).then(|| Sprite {
+                position: point,
+                size: 10.0 + thick * 7.0,
+                alpha: 0.13 * lit * thick.min(1.0),
+                soft: 1.0,
+                tint_amount: 1.0,
+                tint: [0.62, 0.66, 1.0],
+                ..Sprite::default()
+            });
+            let core = Sprite {
+                position: point,
+                size: 1.2 + 2.2 * thick,
+                alpha: lit * (0.55 + 0.45 * thick.min(1.0)),
+                soft: 0.3,
+                tint_amount: 0.25,
+                tint: [0.9, 0.93, 1.0],
+                ..Sprite::default()
+            };
+            glow.into_iter().chain(std::iter::once(core))
+        });
+        let strike = e.lightning.path.iter().filter(|&&(_, thick)| thick > 0.5).last().copied().filter(|_| shown).map(|(point, _)| Sprite {
             position: point,
-            size: 3.2,
-            alpha: lit,
-            soft: 0.25,
-            tint_amount: 0.4,
-            tint: [0.85, 0.9, 1.0],
+            size: 120.0,
+            alpha: 0.22 * lit,
+            soft: 1.0,
+            tint_amount: 1.0,
+            tint: [0.75, 0.8, 1.0],
             ..Sprite::default()
         });
         let clock = self.air.clock;
@@ -764,7 +789,7 @@ impl SnowSimulation {
             spin: [3.0 + leaf.seed * 4.0 + spin_rate(false, leaf.seed), tumble_speed(clock * 3.0, leaf.seed) * 3.0],
             ..Sprite::default()
         });
-        sky.into_iter().chain(glows).chain(confetti).chain(hail).chain(sparks).chain(bolt).chain(grains).chain(debris)
+        sky.into_iter().chain(strike).chain(glows).chain(confetti).chain(hail).chain(sparks).chain(bolt).chain(grains).chain(debris)
     }
 }
 
@@ -792,22 +817,27 @@ fn burst(into: &mut Vec<Spark>, random: &mut Random, at: V2, color: [f32; 3]) {
 
 /// A jagged stroke of lightning from above the screen down to `bottom`, with a branch or two, as points close enough
 /// together to read as a line.
-fn bolt(random: &mut Random, x: f32, top: f32, bottom: f32) -> Vec<V2> {
+fn bolt(random: &mut Random, x: f32, top: f32, bottom: f32) -> Vec<(V2, f32)> {
     let mut path = Vec::new();
     let mut point = V2::new(x, top + 10.0);
     let mut drift = 0.0;
     let mut branches = 0;
+    let span = (top + 10.0 - bottom).max(1.0);
     while point.y > bottom {
         drift = (drift + random.range(-1.6, 1.6)).clamp(-2.8, 2.8);
         let next = point + V2::new(drift + random.range(-1.2, 1.2), -random.range(2.5, 3.6));
-        path.push(next);
-        if branches < 2 && random.next() < 0.012 {
+        // The channel thins a little on its way down.
+        let thick = 1.0 - 0.35 * ((top + 10.0 - next.y) / span).clamp(0.0, 1.0);
+        path.push((next, thick));
+        if branches < 3 && random.next() < 0.014 {
             branches += 1;
             let side = if random.next() < 0.5 { -1.0 } else { 1.0 };
             let mut fork = next;
-            for _ in 0..random.range(20.0, 60.0) as usize {
+            let length = random.range(20.0, 70.0) as usize;
+            for n in 0..length {
                 fork += V2::new(side * random.range(0.8, 2.4), -random.range(2.0, 3.2));
-                path.push(fork);
+                // A branch starts thinner than the channel and fades out to nothing.
+                path.push((fork, 0.45 * (1.0 - n as f32 / length as f32) + 0.05));
             }
         }
         point = next;

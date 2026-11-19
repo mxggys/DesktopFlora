@@ -30,7 +30,7 @@ use crate::prefs::Settings;
 use crate::render::{Ambient, Gpu, LANTERN_REACH, Surface};
 use crate::tracker::{COVER_ONLY, Tracker, class_name, cloaked, local_frame, process_name};
 
-const CLASS: PCWSTR = w!("SnowhushOverlay");
+const CLASS: PCWSTR = w!("DesktopFloraOverlay");
 /// Seconds the snow takes to fade out of a full-screen app's way, and back in once it goes.
 const FADE_OUT: f32 = 0.25;
 const FADE_IN: f32 = 0.35;
@@ -665,7 +665,7 @@ fn lowest_open_popup() -> Option<HWND> {
             unsafe { GetWindowThreadProcessId(window, Some(&mut process)) };
             let popup = class == "#32768"
                 || class == "tooltips_class32"
-                || class == "SnowhushMenu"
+                || class == "DesktopFloraMenu"
                 || COVER_ONLY.contains(&class.as_str())
                 || (process == shell && class != "Shell_TrayWnd" && class != "Shell_SecondaryTrayWnd");
             top.push((class, process));

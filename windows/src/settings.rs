@@ -962,10 +962,20 @@ impl Painter<'_> {
         self.card(tr("deep"), &t("Also settles on a selection dragged across the desktop"), Control::Switch(settings.deep_interaction, Action::DeepInteraction), left, right, y)?;
 
         self.section(tr("display"), left, right, y)?;
-        self.card(tr("behind"), &t("Falls behind your windows, in front of the wallpaper"), Control::Switch(settings.behind_windows, Action::BehindWindows), left, right, y)?;
-        if !settings.behind_windows {
-            self.card(tr("full_screen"), &t("Stays over full-screen apps and games"), Control::Switch(settings.over_full_screen, Action::OverFullScreen), left, right, y)?;
-        }
+        self.card(
+            &t("Over Full-Screen Games"),
+            &t("Off, it hides while a game or video runs full screen and uses no power meanwhile"),
+            Control::Switch(settings.over_full_screen, Action::OverFullScreen),
+            left,
+            right,
+            y,
+        )?;
+        let behind = if settings.over_full_screen {
+            t("Falls behind your windows, in front of the wallpaper. Turned on, it no longer shows over full-screen games")
+        } else {
+            t("Falls behind your windows, in front of the wallpaper")
+        };
+        self.card(tr("behind"), &behind, Control::Switch(settings.behind_windows, Action::BehindWindows), left, right, y)?;
         self.card(tr("taskbar"), &t("Settles under a see-through taskbar, as with TranslucentTB"), Control::Switch(settings.behind_taskbar, Action::BehindTaskbar), left, right, y)?;
         self.card(tr("screenshots"), &t("Screenshots and screen sharing show it too"), Control::Switch(settings.show_in_screenshots, Action::Screenshots), left, right, y)?;
         let rates = vec![t("Eco"), t("Normal"), t("Max")];

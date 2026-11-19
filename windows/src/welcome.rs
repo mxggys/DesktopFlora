@@ -15,7 +15,7 @@ use snowhush_core::text::tr;
 use crate::log;
 use crate::snow::Piece;
 
-const CLASS: PCWSTR = w!("SnowhushWelcome");
+const CLASS: PCWSTR = w!("DesktopFloraWelcome");
 const WIDTH: f32 = 440.0;
 const HEIGHT: f32 = 430.0;
 const TITLE: &str = "IT'S SNOWING\nON YOUR DESKTOP.";

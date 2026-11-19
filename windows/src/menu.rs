@@ -53,11 +53,11 @@ const TIMER_POINTER: usize = 2;
 /// The first build of Windows 11 22H2, which has the system's backdrops.
 const BACKDROP_BUILD: u32 = 22621;
 /// Sizes in DIPs, after the menus of Windows 11.
-const PAD: f32 = 4.0;
-const ROW: f32 = 28.0;
+const PAD: f32 = 6.0;
+const ROW: f32 = 32.0;
 const SEPARATOR: f32 = 7.0;
 const HEADER: f32 = 24.0;
-const ROW_RADIUS: f32 = 4.0;
+const ROW_RADIUS: f32 = 6.0;
 /// The centre of the marks and the start of the labels, from the panel's left edge.
 const MARK: f32 = 20.0;
 const LABEL: f32 = 36.0;

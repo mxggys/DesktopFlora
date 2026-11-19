@@ -29,12 +29,13 @@ fn main() {
         return;
     }
     unsafe {
-        let _instance = CreateMutexW(None, true, w!("Local\\Snowhush"));
+        let _instance = CreateMutexW(None, true, w!("Local\\DesktopFlora"));
         if GetLastError() == ERROR_ALREADY_EXISTS {
             return;
         }
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
+    prefs::migrate();
     snowhush::language::choose();
     log::start();
     log!("DesktopFlora {}", env!("CARGO_PKG_VERSION"));

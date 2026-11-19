@@ -3,7 +3,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use windows::Win32::Foundation::{ERROR_SUCCESS, WIN32_ERROR};
 use windows::Win32::System::Registry::{
-    HKEY_CURRENT_USER, REG_DWORD, REG_SZ, RRF_RT_REG_DWORD, RRF_RT_REG_SZ, RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW,
+    HKEY, HKEY_CURRENT_USER, KEY_READ, REG_DWORD, REG_SZ, RRF_RT_REG_BINARY, RRF_RT_REG_DWORD, RRF_RT_REG_SZ, RegCloseKey, RegCopyTreeW,
+    RegCreateKeyW, RegDeleteKeyValueW, RegGetValueW, RegOpenKeyExW, RegSetKeyValueW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{SPI_GETCLIENTAREAANIMATION, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW};
 use windows::core::{BOOL, PCWSTR, w};
@@ -11,7 +12,10 @@ use windows::core::{BOOL, PCWSTR, w};
 use snowhush_core::halloween::Choice;
 use snowhush_core::simulation::{Look, Mode};
 
-const KEY: PCWSTR = w!("Software\\Snowhush");
+/// DesktopFlora's own settings. Versions before 0.18 kept them under Snowhush's key, which the original Snowhush
+/// shares and removes when it is uninstalled; they are copied over once.
+const KEY: PCWSTR = w!("Software\\DesktopFlora");
+const OLD_KEY: PCWSTR = w!("Software\\Snowhush");
 /// What falls by the number the registry keeps it as: new kinds only ever go on the end.
 const MODES: [Mode; 13] = Mode::ALL;
 
@@ -40,7 +44,11 @@ pub const SHORTCUTS: [(&str, PCWSTR, Hotkey); 3] = [
     ("Next weather", w!("hotkeyWeather"), Hotkey { modifiers: CTRL_ALT, key: b'W' as u32 }),
 ];
 const RUN: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
-const RUN_VALUE: PCWSTR = w!("Snowhush");
+const RUN_VALUE: PCWSTR = w!("DesktopFlora");
+/// The name Open at Login went by before 0.18, shared with the original Snowhush.
+const OLD_RUN_VALUE: PCWSTR = w!("Snowhush");
+/// Where Windows keeps which login items were switched off in Settings → Apps → Startup or the Task Manager.
+const STARTUP_APPROVED: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run");
 
 #[derive(Clone, Copy)]
 pub struct Settings {
@@ -276,7 +284,55 @@ fn other_than(mode: Mode) -> Mode {
     if mode == Mode::Snow { Mode::Autumn } else { Mode::Snow }
 }
 
+/// Moves what earlier versions kept under Snowhush's names to DesktopFlora's own, once: the settings, and Open at
+/// Login when it starts this app.
+pub fn migrate() {
+    unsafe {
+        let mut key = HKEY::default();
+        if RegOpenKeyExW(HKEY_CURRENT_USER, KEY, None, KEY_READ, &mut key) == ERROR_SUCCESS {
+            let _ = RegCloseKey(key);
+        } else if RegOpenKeyExW(HKEY_CURRENT_USER, OLD_KEY, None, KEY_READ, &mut key) == ERROR_SUCCESS {
+            let _ = RegCloseKey(key);
+            let mut new = HKEY::default();
+            if RegCreateKeyW(HKEY_CURRENT_USER, KEY, &mut new) == ERROR_SUCCESS {
+                let _ = RegCopyTreeW(HKEY_CURRENT_USER, OLD_KEY, new);
+                let _ = RegCloseKey(new);
+            }
+        }
+    }
+    if read_run(OLD_RUN_VALUE).is_some_and(|command| command.to_lowercase().contains("desktopflora")) {
+        unsafe {
+            let _ = RegDeleteKeyValueW(HKEY_CURRENT_USER, RUN, OLD_RUN_VALUE);
+        }
+        let _ = set_opens_at_login(true);
+    }
+}
+
+fn read_run(name: PCWSTR) -> Option<String> {
+    let mut buffer = [0u16; 1024];
+    let mut size = (buffer.len() * 2) as u32;
+    let status = unsafe { RegGetValueW(HKEY_CURRENT_USER, RUN, name, RRF_RT_REG_SZ, None, Some(buffer.as_mut_ptr().cast::<c_void>()), Some(&mut size)) };
+    if status != ERROR_SUCCESS {
+        return None;
+    }
+    let length = buffer.iter().position(|&c| c == 0).unwrap_or(0);
+    Some(String::from_utf16_lossy(&buffer[..length]))
+}
+
+/// Whether the login item was switched off in Windows' own list of startup apps: its first byte is odd then.
+fn startup_disabled() -> bool {
+    let mut state = [0u8; 12];
+    let mut size = state.len() as u32;
+    let status = unsafe {
+        RegGetValueW(HKEY_CURRENT_USER, STARTUP_APPROVED, RUN_VALUE, RRF_RT_REG_BINARY, None, Some(state.as_mut_ptr().cast::<c_void>()), Some(&mut size))
+    };
+    status == ERROR_SUCCESS && size > 0 && state[0] & 1 == 1
+}
+
 pub fn opens_at_login() -> bool {
+    if startup_disabled() {
+        return false;
+    }
     let mut buffer = [0u16; 1024];
     let mut size = (buffer.len() * 2) as u32;
     let status =
@@ -290,11 +346,12 @@ pub fn opens_at_login() -> bool {
 
 /// Turns Open at Login on the first time, once: switched off later, it stays off.
 pub fn open_at_login_by_default() {
-    if read(w!("loginDefaulted")).is_some() {
+    // Asked under its own name: before 0.18 the original Snowhush's answer counted for DesktopFlora too.
+    if read(w!("floraLoginDefaulted")).is_some() {
         return;
     }
     if set_opens_at_login(true) == ERROR_SUCCESS {
-        write(w!("loginDefaulted"), 1);
+        write(w!("floraLoginDefaulted"), 1);
     }
 }
 
@@ -341,6 +398,8 @@ pub fn set_opens_at_login(on: bool) -> WIN32_ERROR {
             return RegDeleteKeyValueW(HKEY_CURRENT_USER, RUN, RUN_VALUE);
         }
         let Some(command) = command() else { return WIN32_ERROR(1) };
+        // Switched on here, it is on in Windows' list of startup apps too.
+        let _ = RegDeleteKeyValueW(HKEY_CURRENT_USER, STARTUP_APPROVED, RUN_VALUE);
         RegSetKeyValueW(HKEY_CURRENT_USER, RUN, RUN_VALUE, REG_SZ.0, Some(command.as_ptr().cast()), (command.len() * 2) as u32)
     }
 }

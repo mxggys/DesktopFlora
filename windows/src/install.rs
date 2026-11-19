@@ -20,14 +20,18 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{GUID, HSTRING, Interface, PCWSTR, w};
 
-const UNINSTALL: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Snowhush");
+const UNINSTALL: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\DesktopFlora");
+/// Where versions before 0.18 registered, under the original Snowhush's name.
+const OLD_UNINSTALL: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Snowhush");
 const RUN: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
-const SETTINGS: PCWSTR = w!("Software\\Snowhush");
-const NAME: PCWSTR = w!("Snowhush");
-/// The app's hidden window, which a running Snowhush always has.
-const CONTROLLER: PCWSTR = w!("SnowhushController");
-/// Where the app goes, under the user's programs folder and local app data. The registry keeps the old name,
-/// so settings, Open at Login and the uninstall entry carry over from Snowhush Plus.
+const STARTUP_APPROVED: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run");
+const SETTINGS: PCWSTR = w!("Software\\DesktopFlora");
+const NAME: PCWSTR = w!("DesktopFlora");
+const OLD_NAME: PCWSTR = w!("Snowhush");
+/// The app's hidden window, which a running DesktopFlora always has; before 0.18 it had Snowhush's class.
+const CONTROLLER: PCWSTR = w!("DesktopFloraController");
+const OLD_CONTROLLER: PCWSTR = w!("SnowhushController");
+/// Where the app goes, under the user's programs folder and local app data.
 const FOLDER: &str = "DesktopFlora";
 const EXE: &str = "DesktopFlora.exe";
 const SHORTCUT: &str = "DesktopFlora.lnk";
@@ -35,15 +39,27 @@ const OLD_FOLDER: &str = "Snowhush";
 const OLD_SHORTCUT: &str = "Snowhush.lnk";
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-/// The version the uninstall entry records, if Snowhush is installed.
+/// The version the uninstall entry records, if DesktopFlora is installed.
 pub fn installed_version() -> Option<String> {
-    read_string(UNINSTALL, w!("DisplayVersion"))
+    read_string(UNINSTALL, w!("DisplayVersion")).or_else(|| ours(OLD_UNINSTALL).then(|| read_string(OLD_UNINSTALL, w!("DisplayVersion"))).flatten())
+}
+
+/// Whether the uninstall entry under the original Snowhush's name is one an earlier DesktopFlora wrote.
+fn ours(key: PCWSTR) -> bool {
+    read_string(key, w!("DisplayName")).is_some_and(|name| name == "DesktopFlora")
 }
 
 /// Puts the app in place and registers it, replacing a running or older copy. Returns where the app went.
 pub fn install(app: &[u8], version: &str) -> Result<PathBuf, String> {
     close_running();
-    let previous = read_string(UNINSTALL, w!("InstallLocation"));
+    let previous = read_string(UNINSTALL, w!("InstallLocation"))
+        .or_else(|| ours(OLD_UNINSTALL).then(|| read_string(OLD_UNINSTALL, w!("InstallLocation"))).flatten());
+    // Registered under the original Snowhush's name by an earlier version: that entry goes, this one replaces it.
+    if ours(OLD_UNINSTALL) {
+        unsafe {
+            let _ = RegDeleteTreeW(HKEY_CURRENT_USER, OLD_UNINSTALL);
+        }
+    }
     let folder = known_folder(&FOLDERID_UserProgramFiles).ok_or("the programs folder isn't available")?.join(FOLDER);
     std::fs::create_dir_all(&folder).map_err(|error| format!("couldn't create {}: {error}", folder.display()))?;
     let exe = folder.join(EXE);
@@ -79,7 +95,13 @@ pub fn install(app: &[u8], version: &str) -> Result<PathBuf, String> {
     write_number(UNINSTALL, w!("NoModify"), 1);
     write_number(UNINSTALL, w!("NoRepair"), 1);
     write_number(UNINSTALL, w!("EstimatedSize"), app.len().div_ceil(1024) as u32);
-    // Open at Login follows the app to where it now lives.
+    // Open at Login follows the app to where it now lives, and moves to DesktopFlora's own name.
+    if read_string(RUN, OLD_NAME).is_some_and(|command| command.to_lowercase().contains("desktopflora")) {
+        unsafe {
+            let _ = RegDeleteKeyValueW(HKEY_CURRENT_USER, RUN, OLD_NAME);
+        }
+        write_string(RUN, NAME, &quoted);
+    }
     if read_string(RUN, NAME).is_some() {
         write_string(RUN, NAME, &quoted);
     }
@@ -102,6 +124,13 @@ pub fn uninstall() {
         let _ = RegDeleteTreeW(HKEY_CURRENT_USER, UNINSTALL);
         let _ = RegDeleteTreeW(HKEY_CURRENT_USER, SETTINGS);
         let _ = RegDeleteKeyValueW(HKEY_CURRENT_USER, RUN, NAME);
+        let _ = RegDeleteKeyValueW(HKEY_CURRENT_USER, STARTUP_APPROVED, NAME);
+        if read_string(RUN, OLD_NAME).is_some_and(|command| command.to_lowercase().contains("desktopflora")) {
+            let _ = RegDeleteKeyValueW(HKEY_CURRENT_USER, RUN, OLD_NAME);
+        }
+        if ours(OLD_UNINSTALL) {
+            let _ = RegDeleteTreeW(HKEY_CURRENT_USER, OLD_UNINSTALL);
+        }
     }
     if let Some(folder) = folder.filter(|folder| folder.ends_with(FOLDER) || folder.ends_with(OLD_FOLDER)) {
         let _ = std::process::Command::new("cmd.exe")
@@ -120,8 +149,35 @@ pub fn launch(exe: &Path) {
 
 /// Asks a running Snowhush to quit and waits a few seconds for it to go.
 fn close_running() {
+    close(CONTROLLER);
+    // A DesktopFlora from before 0.18, by its old class; never the original Snowhush, which has the same one.
     unsafe {
-        let Ok(window) = FindWindowW(CONTROLLER, PCWSTR::null()) else { return };
+        if let Ok(window) = FindWindowW(OLD_CONTROLLER, PCWSTR::null())
+            && process_path(window).is_some_and(|path| path.to_lowercase().contains("desktopflora"))
+        {
+            close(OLD_CONTROLLER);
+        }
+    }
+}
+
+/// The executable the process owning `window` runs.
+fn process_path(window: windows::Win32::Foundation::HWND) -> Option<String> {
+    use windows::Win32::System::Threading::{PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW};
+    unsafe {
+        let mut process = 0;
+        GetWindowThreadProcessId(window, Some(&mut process));
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process).ok()?;
+        let mut buffer = [0u16; 1024];
+        let mut length = buffer.len() as u32;
+        let found = QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, windows::core::PWSTR(buffer.as_mut_ptr()), &mut length).is_ok();
+        let _ = CloseHandle(handle);
+        found.then(|| String::from_utf16_lossy(&buffer[..length as usize]))
+    }
+}
+
+fn close(class: PCWSTR) {
+    unsafe {
+        let Ok(window) = FindWindowW(class, PCWSTR::null()) else { return };
         let mut process = 0;
         GetWindowThreadProcessId(window, Some(&mut process));
         let handle = OpenProcess(PROCESS_SYNCHRONIZE, false, process).ok();
