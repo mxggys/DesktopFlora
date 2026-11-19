@@ -13,6 +13,11 @@
 "confetti" = "彩纸";
 "fireworks" = "烟花";
 "hail" = "冰雹";
+"sleet" = "雨夹雪";
+"freezing_rain" = "冻雨";
+"graupel" = "霰";
+"autumn_storm" = "秋季风暴";
+"blossom_wind" = "花吹雪";
 "fireflies" = "萤火虫";
 "aurora" = "极光";
 "sandstorm" = "沙尘暴";

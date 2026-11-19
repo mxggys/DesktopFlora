@@ -734,7 +734,7 @@ struct Painter<'a> {
 }
 
 /// What falls, in the order the tiles show them, with their signs.
-const KINDS: [(Mode, &str); 7] = [
+const KINDS: [(Mode, &str); 12] = [
     (Mode::Snow, "❄"),
     (Mode::Autumn, "❦"),
     (Mode::Rain, "☂"),
@@ -742,6 +742,11 @@ const KINDS: [(Mode, &str); 7] = [
     (Mode::Storm, "⚡"),
     (Mode::Fog, "≋"),
     (Mode::Hail, "❅"),
+    (Mode::Sleet, "❆"),
+    (Mode::FreezingRain, "✼"),
+    (Mode::Graupel, "⁘"),
+    (Mode::AutumnStorm, "❧"),
+    (Mode::BlossomWind, "❀"),
 ];
 
 /// A kind's name in the person's language.

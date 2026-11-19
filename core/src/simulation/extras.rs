@@ -55,6 +55,7 @@ pub(super) struct Extras {
     random: Random,
     fog: Vec<Puff>,
     hail: Vec<Bit>,
+    graupel: Vec<Bit>,
     lightning: Lightning,
     next_strike: f64,
     /// The fine spray heavy rain hangs low over the ground in, and how far a storm has darkened the sky.
@@ -68,6 +69,7 @@ impl Default for Extras {
             random: Random::new(),
             fog: Vec::new(),
             hail: Vec::new(),
+            graupel: Vec::new(),
             lightning: Lightning::default(),
             next_strike: 2.0,
             mist: Vec::new(),
@@ -80,6 +82,7 @@ impl Extras {
     pub(super) fn sprite_count(&self) -> usize {
         self.fog.len()
             + self.hail.len()
+            + self.graupel.len()
             + if self.lightning.brightness > 0.01 { self.lightning.path.len() * 2 + 2 } else { 0 }
             + self.mist.len()
             + if self.gloom > 0.0 { 3 } else { 0 }
@@ -184,61 +187,13 @@ impl SnowSimulation {
         }
 
 
-        // Hail: hard and fast, bouncing off window tops and the ground, then lying a moment before it melts.
-        let hail_target = if wants(Mode::Hail) { ((40.0 + 280.0 * amount) * area).min(800.0) as usize } else { 0 };
-        let falling = e.hail.iter().filter(|bit| bit.lying.is_none() && bit.bounces == 0).count();
-        for _ in falling..hail_target {
-            let random = &mut e.random;
-            let fall = random.range(520.0, 780.0);
-            e.hail.push(Bit {
-                position: V2::new(random.range(-40.0, width + 40.0), height + random.range(10.0, height)),
-                velocity: V2::new(wind * 2.5, -fall),
-                size: random.range(2.2, 4.2),
-                color: [0.93, 0.97, 1.0],
-                lying: None,
-                bounces: 0,
-            });
-        }
+        // Hail, hard and fast, and graupel, soft and slow: bouncing off window tops and the ground, then lying a
+        // while before they melt.
         let layers = &self.layers;
-        for bit in e.hail.iter_mut() {
-            let push = stir(bit.position, 50.0);
-            if let Some(age) = bit.lying.as_mut() {
-                *age += dt;
-                if push.length() > 150.0 {
-                    // Kicked by the cursor, it skitters off across the ground.
-                    bit.lying = None;
-                    bit.position.y += 1.0;
-                    bit.velocity = V2::new(push.x * 0.9, push.length() * 0.4 + 120.0);
-                    bit.bounces = 1;
-                }
-                continue;
-            }
-            bit.velocity += push * 2.0 * dt;
-            let before = bit.position.y;
-            bit.velocity.y -= 1400.0 * dt;
-            bit.position += bit.velocity * dt;
-            if let Some((li, i)) = landing(layers, bit.position.x, before, bit.position.y, true, true) {
-                let surface = layers[li].surface(i);
-                bit.position.y = surface + bit.size * 0.5;
-                let random = &mut e.random;
-                // Each bounce takes most of its speed; slow enough, it stays where it is.
-                if bit.bounces < 2 && bit.velocity.y < -180.0 {
-                    bit.velocity.y = -bit.velocity.y * random.range(0.22, 0.38);
-                    bit.velocity.x = bit.velocity.x * 0.5 + random.range(-90.0, 90.0);
-                    bit.bounces += 1;
-                } else if li == 0 {
-                    bit.lying = Some(0.0);
-                } else {
-                    // Off a window's top edge it rolls over and falls on.
-                    bit.velocity = V2::new(random.range(-60.0, 60.0), -40.0);
-                    bit.position.y -= 1.0;
-                    bit.bounces = 3;
-                }
-            }
+        for (spec, bits) in [(&HAIL, &mut e.hail), (&GRAUPEL, &mut e.graupel)] {
+            let target = if wants(spec.mode) { ((spec.count.0 + spec.count.1 * amount) * area).min(spec.count.2) as usize } else { 0 };
+            pelt(bits, &mut e.random, layers, &stir, spec, target, wind, width, height, dt);
         }
-        e.hail.retain(|bit| bit.lying.is_none_or(|age| age < 2.5) && bit.position.y > -20.0);
-        trim_lying(&mut e.hail);
-
 
         // Lightning: a stroke now and then while it storms, lighting the sky, sometimes flickering once more.
         let lightning = &mut e.lightning;
@@ -311,19 +266,22 @@ impl SnowSimulation {
     pub(super) fn extra_sprites(&self) -> impl Iterator<Item = Sprite> + '_ {
         let e = &self.extras;
         let opacity = self.falling_opacity;
-        let hail = e.hail.iter().map(move |bit| {
-            let fade = bit.lying.map_or(1.0, |age| 1.0 - smoothstep(0.8, 2.5, age));
-            Sprite {
-                position: bit.position,
-                velocity: if bit.lying.is_some() { V2::ZERO } else { bit.velocity },
-                size: bit.size,
-                alpha: 0.92 * fade * opacity,
-                soft: 0.35,
-                tint_amount: 0.5,
-                tint: bit.color,
-                ..Sprite::default()
+        let pellet = move |spec: &'static Pellets| {
+            move |bit: &Bit| {
+                let fade = bit.lying.map_or(1.0, |age| 1.0 - smoothstep(spec.lie * 0.3, spec.lie, age));
+                Sprite {
+                    position: bit.position,
+                    velocity: if bit.lying.is_some() { V2::ZERO } else { bit.velocity },
+                    size: bit.size,
+                    alpha: spec.alpha * fade * opacity,
+                    soft: spec.soft,
+                    tint_amount: spec.tint_amount,
+                    tint: bit.color,
+                    ..Sprite::default()
+                }
             }
-        });
+        };
+        let hail = e.hail.iter().map(pellet(&HAIL)).chain(e.graupel.iter().map(pellet(&GRAUPEL)));
         let lit = e.lightning.brightness;
         let shown = lit > 0.01;
         let sky = shown.then(|| Sprite {
@@ -404,6 +362,125 @@ fn bolt(random: &mut Random, x: f32, top: f32, bottom: f32) -> Vec<(V2, f32)> {
         point = next;
     }
     path
+}
+
+/// How a kind of pellet falls, bounces, lies and looks.
+struct Pellets {
+    mode: Mode,
+    /// How many fall at least, how many more at full intensity, per megapoint, and how many at most.
+    count: (f32, f32, f32),
+    fall: (f32, f32),
+    size: (f32, f32),
+    gravity: f32,
+    bounces: u8,
+    /// Slower than this, it doesn't bounce again.
+    bounce_speed: f32,
+    restitution: (f32, f32),
+    /// How long it lies before it has melted, in seconds.
+    lie: f32,
+    color: [f32; 3],
+    alpha: f32,
+    soft: f32,
+    tint_amount: f32,
+}
+
+/// Hard, clear ice, fast, bouncing high and melting soon.
+const HAIL: Pellets = Pellets {
+    mode: Mode::Hail,
+    count: (40.0, 280.0, 800.0),
+    fall: (520.0, 780.0),
+    size: (2.2, 4.2),
+    gravity: 1400.0,
+    bounces: 2,
+    bounce_speed: 180.0,
+    restitution: (0.22, 0.38),
+    lie: 2.5,
+    color: [0.93, 0.97, 1.0],
+    alpha: 0.92,
+    soft: 0.35,
+    tint_amount: 0.5,
+};
+
+/// Soft, white, opaque snow pellets: slower, hardly bouncing, lying a good while.
+const GRAUPEL: Pellets = Pellets {
+    mode: Mode::Graupel,
+    count: (60.0, 360.0, 1000.0),
+    fall: (260.0, 380.0),
+    size: (1.8, 3.2),
+    gravity: 900.0,
+    bounces: 1,
+    bounce_speed: 140.0,
+    restitution: (0.1, 0.22),
+    lie: 9.0,
+    color: [0.97, 0.97, 0.99],
+    alpha: 0.95,
+    soft: 0.55,
+    tint_amount: 0.8,
+};
+
+/// Keeps so many pellets falling, and moves them along: falling, bouncing, rolling off windows, lying, melting.
+#[allow(clippy::too_many_arguments)]
+fn pelt(
+    bits: &mut Vec<Bit>,
+    random: &mut Random,
+    layers: &[crate::layer::SnowLayer],
+    stir: &dyn Fn(V2, f32) -> V2,
+    spec: &Pellets,
+    target: usize,
+    wind: f32,
+    width: f32,
+    height: f32,
+    dt: f32,
+) {
+    let falling = bits.iter().filter(|bit| bit.lying.is_none() && bit.bounces == 0).count();
+    for _ in falling..target {
+        let fall = random.range(spec.fall.0, spec.fall.1);
+        bits.push(Bit {
+            position: V2::new(random.range(-40.0, width + 40.0), height + random.range(10.0, height)),
+            velocity: V2::new(wind * 2.5 * (spec.fall.0 / 520.0), -fall),
+            size: random.range(spec.size.0, spec.size.1),
+            color: spec.color,
+            lying: None,
+            bounces: 0,
+        });
+    }
+    for bit in bits.iter_mut() {
+        let push = stir(bit.position, 50.0);
+        if let Some(age) = bit.lying.as_mut() {
+            *age += dt;
+            if push.length() > 150.0 {
+                // Kicked by the cursor, it skitters off across the ground.
+                bit.lying = None;
+                bit.position.y += 1.0;
+                bit.velocity = V2::new(push.x * 0.9, push.length() * 0.4 + 120.0);
+                bit.bounces = 1;
+            }
+            continue;
+        }
+        bit.velocity += push * 2.0 * dt;
+        let before = bit.position.y;
+        bit.velocity.y -= spec.gravity * dt;
+        bit.position += bit.velocity * dt;
+        if let Some((li, i)) = landing(layers, bit.position.x, before, bit.position.y, true, true) {
+            let surface = layers[li].surface(i);
+            bit.position.y = surface + bit.size * 0.5;
+            // Each bounce takes most of its speed; slow enough, it stays where it is.
+            if bit.bounces < spec.bounces && bit.velocity.y < -spec.bounce_speed {
+                bit.velocity.y = -bit.velocity.y * random.range(spec.restitution.0, spec.restitution.1);
+                bit.velocity.x = bit.velocity.x * 0.5 + random.range(-90.0, 90.0) * spec.restitution.1;
+                bit.bounces += 1;
+            } else if li == 0 {
+                bit.lying = Some(0.0);
+            } else {
+                // Off a window's top edge it rolls over and falls on.
+                bit.velocity = V2::new(random.range(-60.0, 60.0), -40.0);
+                bit.position.y -= 1.0;
+                bit.bounces = spec.bounces + 1;
+            }
+        }
+    }
+    bits.retain(|bit| bit.lying.is_none_or(|age| age < spec.lie) && bit.position.y > -20.0);
+    trim_lying(bits);
 }
 
 /// Keeps no more than `MAX_LYING` lying, the oldest going first.

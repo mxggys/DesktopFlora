@@ -19,7 +19,7 @@ const OLD_KEY: PCWSTR = w!("Software\\Snowhush");
 /// What falls by the number the registry keeps it as: new kinds only ever go on the end.
 /// What falls by the number the settings keep it under, which never changes: the numbers of kinds since taken out stay
 /// unused, and what was saved under one falls back to snow.
-const MODES: [Option<Mode>; 10] = [
+const MODES: [Option<Mode>; 19] = [
     Some(Mode::Snow),
     Some(Mode::Autumn),
     Some(Mode::Rain),
@@ -30,6 +30,15 @@ const MODES: [Option<Mode>; 10] = [
     None,
     None,
     Some(Mode::Hail),
+    None,
+    None,
+    None,
+    None,
+    Some(Mode::Sleet),
+    Some(Mode::FreezingRain),
+    Some(Mode::Graupel),
+    Some(Mode::AutumnStorm),
+    Some(Mode::BlossomWind),
 ];
 
 /// The kind saved under a number.

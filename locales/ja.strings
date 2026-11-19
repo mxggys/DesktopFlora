@@ -13,6 +13,11 @@
 "confetti" = "紙吹雪";
 "fireworks" = "花火";
 "hail" = "雹";
+"sleet" = "みぞれ";
+"freezing_rain" = "着氷性の雨";
+"graupel" = "あられ";
+"autumn_storm" = "秋の嵐";
+"blossom_wind" = "花吹雪";
 "fireflies" = "ホタル";
 "aurora" = "オーロラ";
 "sandstorm" = "砂嵐";

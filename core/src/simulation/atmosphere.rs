@@ -6,7 +6,9 @@
 
 use std::f32::consts::{PI, TAU};
 
-use super::{Mode, Random, SnowSimulation, Sprite};
+use std::collections::HashMap;
+
+use super::{Mode, Random, SnowSimulation, Sprite, WindowId, spin, tumble, tumble_speed};
 use crate::geometry::{V2, smoothstep};
 
 const MEGAPOINT: f32 = 1_000_000.0;
@@ -47,6 +49,37 @@ struct Droplet {
     life: f32,
 }
 
+/// An icicle hanging under a window's top edge: where along it, how long it can grow, how thick, and its own pace.
+#[derive(Clone, Copy)]
+struct Icicle {
+    along: f32,
+    length: f32,
+    thickness: f32,
+    pace: f32,
+}
+
+/// A wet leaf a storm has thrown against the glass: it sticks a while, slides down a little, then peels off and falls.
+#[derive(Clone, Copy)]
+struct Stuck {
+    position: V2,
+    velocity: V2,
+    seed: f32,
+    turn: f32,
+    size: f32,
+    age: f32,
+    life: f32,
+}
+
+/// A petal swept along in a gust's swarm.
+#[derive(Clone, Copy)]
+struct Swept {
+    position: V2,
+    velocity: V2,
+    seed: f32,
+    phase: f32,
+    size: f32,
+}
+
 #[derive(Clone, Copy)]
 struct Powder {
     position: V2,
@@ -61,6 +94,8 @@ pub(super) struct Weathering {
     wanted: Atmosphere,
     /// How far the frost has grown in, and how far the moon shows, 0 to 1.
     frost: f32,
+    /// How far it is growing toward.
+    frost_aim: f32,
     rime: Vec<Rime>,
     rime_size: (f32, f32),
     mist: Vec<f32>,
@@ -72,6 +107,13 @@ pub(super) struct Weathering {
     was_raining: f32,
     powder: Vec<Powder>,
     last_cursor: Option<V2>,
+    /// Icicles by window, and how far they have grown, 0 to 1.
+    icicles: HashMap<WindowId, Vec<Icicle>>,
+    ice: f32,
+    stuck: Vec<Stuck>,
+    next_stuck: f64,
+    swept: Vec<Swept>,
+    next_swarm: f64,
 }
 
 impl Default for Weathering {
@@ -80,6 +122,7 @@ impl Default for Weathering {
             random: Random::new(),
             wanted: Atmosphere::default(),
             frost: 0.0,
+            frost_aim: 0.0,
             rime: Vec::new(),
             rime_size: (0.0, 0.0),
             mist: Vec::new(),
@@ -91,6 +134,12 @@ impl Default for Weathering {
             was_raining: 0.0,
             powder: Vec::new(),
             last_cursor: None,
+            icicles: HashMap::new(),
+            ice: 0.0,
+            stuck: Vec::new(),
+            next_stuck: 2.0,
+            swept: Vec::new(),
+            next_swarm: 3.0,
         }
     }
 }
@@ -104,20 +153,32 @@ impl Weathering {
         self.mist.iter().filter(|&&density| density > 0.02).count()
     }
 
+    fn icicles_shown(&self) -> usize {
+        if self.ice <= 0.0 { 0 } else { self.icicles.values().map(Vec::len).sum() }
+    }
+
     pub(super) fn sprite_count(&self) -> usize {
-        self.frost_shown() + self.mist_shown() + if self.moon > 0.0 { 2 } else { 0 } + self.droplets.len() + self.powder.len()
+        self.frost_shown()
+            + self.mist_shown()
+            + if self.moon > 0.0 { 2 } else { 0 }
+            + self.droplets.len()
+            + self.powder.len()
+            + self.icicles_shown()
+            + self.stuck.len()
+            + self.swept.len()
     }
 
     /// What is drawn but only sits there, and doesn't need the screen redrawn for its sake.
     pub(super) fn resting(&self) -> usize {
-        let frost_still = self.frost == 0.0 || self.frost >= 1.0 || self.frost == self.wanted.frost.min(1.0);
+        let frost_still = self.frost == 0.0 || self.frost >= 1.0 || self.frost == self.frost_aim;
         (if frost_still { self.frost_shown() } else { 0 })
             + if self.mist_settled { self.mist_shown() } else { 0 }
             + if self.moon >= 1.0 { 2 } else { 0 }
+            + if self.ice == 0.0 || self.ice >= 1.0 { self.icicles_shown() } else { 0 }
     }
 
     pub(super) fn lively(&self) -> bool {
-        !self.powder.is_empty()
+        !self.powder.is_empty() || !self.swept.is_empty()
     }
 }
 
@@ -125,6 +186,11 @@ impl SnowSimulation {
     #[cfg(test)]
     pub(crate) fn weathering_powder(&self) -> usize {
         self.weathering.powder.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn weathering_swept(&self) -> usize {
+        self.weathering.swept.len()
     }
 
     /// How far frost and mist should cover the glass, and the moon in its phase while it shows.
@@ -141,6 +207,8 @@ impl SnowSimulation {
         let modes = self.air.modes.clone();
         let wants = |mode: Mode| modes.contains(&mode) && !held;
         let raining = self.air.modes.iter().any(|mode| mode.rainy()) && !held;
+        // Freezing rain glazes the glass with frost too.
+        let glazed = if self.air.asked.contains(&Mode::FreezingRain) && !held { 0.45 } else { 0.0 };
         let cursor = self.air.cursor;
         let ground = &self.layers[0];
         let floor = |x: f32| ground.surface(ground.clamped_index(x.clamp(0.0, width - 1.0)));
@@ -148,11 +216,12 @@ impl SnowSimulation {
         let w = &mut self.weathering;
 
         // Frost: crystals laid out once for the screen, shown as far as they have grown.
-        if (w.rime_size != (width, height) || w.rime.is_empty()) && w.wanted.frost > 0.0 {
+        if (w.rime_size != (width, height) || w.rime.is_empty()) && w.wanted.frost.max(glazed) > 0.0 {
             w.rime = grow_rime(&mut w.random, width, height);
             w.rime_size = (width, height);
         }
-        let frost_target = w.wanted.frost.clamp(0.0, 1.0);
+        let frost_target = w.wanted.frost.max(glazed).clamp(0.0, 1.0);
+        w.frost_aim = frost_target;
         if w.frost < frost_target {
             w.frost = (w.frost + dt / FROST_GROWTH).min(frost_target);
         } else if w.frost > frost_target {
@@ -267,6 +336,95 @@ impl SnowSimulation {
             }
         }
         w.powder.retain(|grain| grain.age < grain.life && grain.position.x > -10.0 && grain.position.x < width + 10.0);
+
+        let clock = self.air.clock;
+        let freezing = self.air.asked.contains(&Mode::FreezingRain) && !held;
+        let storming = self.air.asked.contains(&Mode::AutumnStorm) && !held;
+        let blowing = self.air.asked.contains(&Mode::BlossomWind) && !held;
+        let w = &mut self.weathering;
+
+        // Freezing rain: icicles grow under every window's top edge over a minute and a half, and melt once it stops.
+        w.ice = (w.ice + dt / if freezing { 90.0 } else { -40.0 }).clamp(0.0, 1.0);
+        if w.ice > 0.0 {
+            for li in 1..self.layers.len() {
+                let id = self.ids[li];
+                let span = self.layers[li].width();
+                let random = &mut w.random;
+                w.icicles.entry(id).or_insert_with(|| {
+                    let count = (span / 22.0) as usize;
+                    (0..count)
+                        .map(|_| Icicle {
+                            along: random.next(),
+                            // Mostly short, now and then a long one.
+                            length: 5.0 + 38.0 * random.next().powf(2.2),
+                            thickness: random.range(0.16, 0.3),
+                            pace: random.range(0.5, 1.0),
+                        })
+                        .collect()
+                });
+            }
+            let present: Vec<WindowId> = self.ids.iter().skip(1).copied().collect();
+            w.icicles.retain(|id, _| present.contains(id));
+        } else {
+            w.icicles.clear();
+        }
+
+        // An autumn storm now and then throws a wet leaf against the glass, where it sticks and slides before it
+        // peels off.
+        if storming && clock >= w.next_stuck && w.stuck.len() < 10 {
+            let random = &mut w.random;
+            w.stuck.push(Stuck {
+                position: V2::new(random.range(width * 0.04, width * 0.96), random.range(height * 0.25, height * 0.95)),
+                velocity: V2::ZERO,
+                seed: random.range(0.001, 1.0),
+                turn: random.range(0.0, TAU),
+                size: random.range(18.0, 28.0),
+                age: 0.0,
+                life: random.range(6.0, 16.0),
+            });
+            w.next_stuck = clock + random.range(3.0, 9.0) as f64;
+        }
+        for leaf in w.stuck.iter_mut() {
+            leaf.age += dt;
+            if leaf.age < leaf.life {
+                // Held by the water, it creeps down the glass, a little at a time.
+                leaf.position.y -= (2.0 + 4.0 * (leaf.age * 1.3 + leaf.seed * 9.0).sin().max(0.0)) * dt;
+            } else {
+                // Peeled off by the wind: it falls away, carried by the gusts.
+                leaf.velocity += V2::new(wind * 3.0 - leaf.velocity.x, -300.0) * dt;
+                leaf.position += leaf.velocity * dt;
+                leaf.turn += dt * 3.0;
+            }
+        }
+        w.stuck.retain(|leaf| leaf.age < leaf.life + 3.0 && leaf.position.y > -40.0);
+
+        // Blossom wind: now and then a gust sweeps a swarm of petals across the screen in a band, rising and dipping.
+        if blowing && clock >= w.next_swarm && w.swept.len() < 600 {
+            let random = &mut w.random;
+            let way = if wind < 0.0 { -1.0 } else { 1.0 };
+            let band = random.range(height * 0.25, height * 0.85);
+            let count = ((60.0 + 90.0 * amount) * area.sqrt()) as usize;
+            let speed = random.range(280.0, 420.0);
+            for _ in 0..count {
+                w.swept.push(Swept {
+                    position: V2::new(if way > 0.0 { -random.range(10.0, 320.0) } else { width + random.range(10.0, 320.0) }, band + random.range(-70.0, 70.0)),
+                    velocity: V2::new(way * speed * random.range(0.8, 1.2), random.range(-20.0, 20.0)),
+                    seed: random.range(0.001, 1.0),
+                    phase: random.range(0.0, TAU),
+                    size: random.range(8.0, 13.0),
+                });
+            }
+            w.next_swarm = clock + random.range(7.0, 14.0) as f64;
+        }
+        for petal in w.swept.iter_mut() {
+            petal.phase += dt * 1.4;
+            let lift = petal.phase.sin() * 70.0 + (petal.position.x * 0.004 + clock as f32 * 0.7).sin() * 50.0;
+            petal.position += V2::new(petal.velocity.x, petal.velocity.y + lift) * dt;
+            // The gust dies down as it goes, and the petals start to drop.
+            petal.velocity.x *= (-0.12 * dt).exp();
+            petal.velocity.y -= 18.0 * dt;
+        }
+        w.swept.retain(|petal| petal.position.x > -340.0 && petal.position.x < width + 340.0 && petal.position.y > -20.0);
     }
 
     /// The moon, drawn behind everything that falls.
@@ -359,7 +517,58 @@ impl SnowSimulation {
                 ..Sprite::default()
             }
         });
-        powder.chain(drops).chain(frost).chain(mist)
+        let clock = self.air.clock;
+        let ice = smoothstep(0.0, 1.0, w.ice);
+        let layers = &self.layers;
+        let icicles = self.ids.iter().enumerate().skip(1).filter(move |_| ice > 0.0).flat_map(move |(li, id)| {
+            let layer = &layers[li];
+            let base = layer.base();
+            let span = layer.width();
+            let hidden = &layer.face_occluders;
+            w.icicles.get(id).into_iter().flatten().filter_map(move |icicle| {
+                let length = icicle.length * (ice * (1.0 + icicle.pace) - icicle.pace * 0.5).clamp(0.0, 1.0);
+                let x = base.x + icicle.along * span;
+                let middle = base.y - length * 0.5;
+                // Not over a window in front of this one.
+                let covered = hidden.iter().any(|r| x >= r[0] && x <= r[2] && middle >= r[1] && middle <= r[3]);
+                (length > 1.5 && !covered).then(|| Sprite {
+                    position: V2::new(x, middle + 1.0),
+                    size: length,
+                    alpha: 0.9 * opacity,
+                    soft: 0.0,
+                    tint_amount: 1.0,
+                    tint: [0.86, 0.93, 1.0],
+                    // Eight marks an icicle in the shader, its thickness in `lump`.
+                    lump: icicle.thickness,
+                    petal: 8.0,
+                    ..Sprite::default()
+                })
+            })
+        });
+        let stuck = w.stuck.iter().map(move |leaf| {
+            let falling = leaf.age >= leaf.life;
+            Sprite {
+                position: leaf.position,
+                velocity: leaf.velocity,
+                size: leaf.size,
+                alpha: (1.0 - smoothstep(leaf.life + 1.5, leaf.life + 3.0, leaf.age)) * smoothstep(0.0, 0.25, leaf.age) * opacity,
+                // Pressed flat against the glass, face on; turning over once it peels off.
+                leaf: [leaf.seed, leaf.turn, if falling { tumble(clock * 2.0, leaf.seed) } else { 1.0 }],
+                spin: if falling { [3.0, tumble_speed(clock * 2.0, leaf.seed) * 2.0] } else { [0.0, 0.0] },
+                ..Sprite::default()
+            }
+        });
+        let swept = w.swept.iter().map(move |petal| Sprite {
+            position: petal.position,
+            velocity: petal.velocity,
+            size: petal.size,
+            alpha: opacity,
+            leaf: [petal.seed, petal.seed * 40.0 + spin(clock, 2.0 + petal.seed * 3.0), tumble(clock * 1.5, petal.seed)],
+            spin: [2.0 + petal.seed * 3.0, tumble_speed(clock * 1.5, petal.seed) * 1.5],
+            petal: 1.0,
+            ..Sprite::default()
+        });
+        powder.chain(swept).chain(stuck).chain(icicles).chain(drops).chain(frost).chain(mist)
     }
 }
 

@@ -13,6 +13,11 @@
 "confetti" = "Конфетти";
 "fireworks" = "Фейерверк";
 "hail" = "Град";
+"sleet" = "Мокрый снег";
+"freezing_rain" = "Ледяной дождь";
+"graupel" = "Крупа";
+"autumn_storm" = "Осенний шторм";
+"blossom_wind" = "Цветочный ветер";
 "fireflies" = "Светлячки";
 "aurora" = "Северное сияние";
 "sandstorm" = "Песчаная буря";

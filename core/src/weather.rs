@@ -6,14 +6,15 @@ use crate::simulation::Mode;
 pub const LIGHT: u32 = 25;
 pub const STEADY: u32 = 50;
 pub const HEAVY: u32 = 75;
+/// Wind, in km/h, from which blossoms are swept along in gusts, and rain in autumn is an autumn storm.
+const BREEZY: f32 = 30.0;
+const STORMY: f32 = 40.0;
 
 /// What the sky is doing now, from a forecast's `current` block.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Conditions {
     /// Rain or snow and how much, in percent; `None` under a dry sky, when the season decides instead.
     pub falling: Option<(u32, Mode)>,
-    /// What falls along with it: snow with rain near freezing, as sleet.
-    pub also: Option<Mode>,
     /// Scales the breeze, from the wind and its gusts outside.
     pub wind: f32,
     /// The wind outside, in km/h.
@@ -35,7 +36,7 @@ impl Conditions {
     /// cold, damp air, as in rain or fog.
     pub fn glass(&self) -> (f32, f32) {
         let frost = ((1.0 - self.temperature) / 5.0).clamp(0.0, 1.0);
-        let damp = matches!(self.falling, Some((_, Mode::Rain | Mode::Storm | Mode::Fog | Mode::Hail))) || self.humidity >= 92.0;
+        let damp = matches!(self.falling, Some((_, Mode::Rain | Mode::Storm | Mode::Fog | Mode::Hail | Mode::Sleet | Mode::FreezingRain | Mode::AutumnStorm))) || self.humidity >= 92.0;
         let mist = if damp && self.temperature <= 10.0 { (0.5 + (10.0 - self.temperature) / 20.0).min(1.0) } else { 0.0 };
         (frost, mist)
     }
@@ -88,19 +89,19 @@ pub fn outside(month: u32, latitude: f64, sky: &Conditions) -> (u32, Vec<Mode>) 
         let first = if seasonal == coming { vec![coming] } else { vec![seasonal, coming] };
         return (8, first);
     }
+    let this_season = season(month, latitude);
     if let Some((amount, mode)) = sky.falling {
-        let mut modes = Vec::new();
-        if let Some(also) = sky.also.filter(|&also| also != mode) {
-            modes.push(also);
-        }
-        modes.push(mode);
-        return (amount, modes);
+        // Rain in a gale in autumn brings the leaves down with it.
+        let mode = if mode == Mode::Rain && this_season == Season::Autumn && sky.wind_speed >= STORMY { Mode::AutumnStorm } else { mode };
+        return (amount, vec![mode]);
     }
     let windy = ((sky.wind_speed - 8.0) / 30.0).clamp(0.0, 1.0);
-    let (amount, mode) = match season(month, latitude) {
+    // A strong wind on a dry spring or summer day sweeps the blossoms along in gusts.
+    let blossoms = if sky.wind_speed >= BREEZY { Mode::BlossomWind } else { Mode::Blossom };
+    let (amount, mode) = match this_season {
         Season::Autumn => (8.0 + 14.0 * windy, Mode::Autumn),
-        Season::Spring => (7.0 + 8.0 * windy, Mode::Blossom),
-        Season::Summer => (4.0 + 4.0 * windy, Mode::Blossom),
+        Season::Spring => (7.0 + 8.0 * windy, blossoms),
+        Season::Summer => (4.0 + 4.0 * windy, blossoms),
         Season::Winter => (if sky.temperature <= 2.0 { 7.0 } else { 4.0 }, Mode::Snow),
     };
     (amount.round() as u32, vec![mode])
@@ -162,15 +163,17 @@ pub fn conditions(json: &str) -> Option<Conditions> {
         _ if rain > 0.1 => Some((rain_amount(rain), Mode::Rain)),
         _ => None,
     };
-    // Rain near freezing comes with some snow, and freezing rain is sleet.
-    let also = match falling {
-        Some((_, Mode::Rain)) if temperature <= 2.0 || snow > 0.0 || matches!(code, 56 | 57 | 66 | 67) => Some(Mode::Snow),
-        Some((_, Mode::Snow)) if rain > 0.2 => Some(Mode::Rain),
-        _ => None,
-    };
+    // Rain that freezes as it lands is freezing rain; rain near freezing, or snow with rain in it, is sleet; snow
+    // grains are graupel.
+    let falling = falling.map(|(amount, mode)| match mode {
+        Mode::Rain if matches!(code, 56 | 57 | 66 | 67) => (amount, Mode::FreezingRain),
+        Mode::Rain if temperature <= 2.0 || snow > 0.0 => (amount, Mode::Sleet),
+        Mode::Snow if rain > 0.2 => (amount, Mode::Sleet),
+        Mode::Snow if code == 77 => (amount, Mode::Graupel),
+        _ => (amount, mode),
+    });
     Some(Conditions {
         falling,
-        also,
         wind: (wind_speed.max(gusts * 0.6) / 12.0).clamp(0.3, 3.0),
         wind_speed: wind_speed.max(gusts * 0.6),
         day: number(current, "is_day").is_none_or(|day| day != 0.0),
@@ -252,7 +255,14 @@ mod tests {
     #[test]
     fn rain_near_freezing_brings_snow() {
         let sleet = sky(61, &[("rain", "0.5"), ("temperature_2m", "1.0")]);
-        assert_eq!(outside(1, 52.5, &sleet).1, vec![Mode::Snow, Mode::Rain]);
+        assert_eq!(outside(1, 52.5, &sleet).1, vec![Mode::Sleet]);
+        let glaze = sky(66, &[("rain", "0.5"), ("temperature_2m", "-1.0")]);
+        assert_eq!(outside(1, 52.5, &glaze).1, vec![Mode::FreezingRain]);
+        assert_eq!(outside(1, 52.5, &sky(77, &[])).1, vec![Mode::Graupel]);
+        let gale = sky(63, &[("rain", "1.0"), ("temperature_2m", "9"), ("wind_speed_10m", "45"), ("wind_gusts_10m", "80")]);
+        assert_eq!(outside(10, 52.5, &gale).1, vec![Mode::AutumnStorm]);
+        let windy_spring = sky(1, &[("temperature_2m", "15"), ("wind_speed_10m", "35"), ("wind_gusts_10m", "50")]);
+        assert_eq!(outside(4, 52.5, &windy_spring).1, vec![Mode::BlossomWind]);
         let warm = sky(61, &[("rain", "0.5"), ("temperature_2m", "8.0")]);
         assert_eq!(outside(1, 52.5, &warm).1, vec![Mode::Rain]);
     }

@@ -13,6 +13,11 @@
 "confetti" = "Konfetti";
 "fireworks" = "Feuerwerk";
 "hail" = "Hagel";
+"sleet" = "Schneeregen";
+"freezing_rain" = "Eisregen";
+"graupel" = "Graupel";
+"autumn_storm" = "Herbststurm";
+"blossom_wind" = "Blütenwind";
 "fireflies" = "Glühwürmchen";
 "aurora" = "Polarlicht";
 "sandstorm" = "Sandsturm";

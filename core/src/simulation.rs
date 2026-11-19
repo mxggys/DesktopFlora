@@ -108,10 +108,20 @@ pub enum Mode {
     Fog,
     /// Hailstones bouncing off the windows and the ground.
     Hail,
+    /// Rain with wet, heavy flakes in it that melt where they land.
+    Sleet,
+    /// Rain that freezes as it lands: icicles grow under the windows' top edges and frost creeps over the glass.
+    FreezingRain,
+    /// Soft white pellets of snow, bouncing a little and lying a while.
+    Graupel,
+    /// Leaves and rain together, flung about in strong gusts, now and then a wet leaf stuck to the glass.
+    AutumnStorm,
+    /// Cherry blossoms, swept across the screen in swarms by gusts of wind.
+    BlossomWind,
 }
 
 /// How many kinds of `Mode` there are.
-const MODES: usize = 7;
+const MODES: usize = 12;
 
 impl Mode {
     pub const ALL: [Mode; MODES] = [
@@ -122,16 +132,48 @@ impl Mode {
         Mode::Storm,
         Mode::Fog,
         Mode::Hail,
+        Mode::Sleet,
+        Mode::FreezingRain,
+        Mode::Graupel,
+        Mode::AutumnStorm,
+        Mode::BlossomWind,
     ];
+
+    /// What falls for it: a kind made of others falls as they do, with its own touches on top.
+    pub fn parts(self) -> &'static [Mode] {
+        match self {
+            Mode::Sleet => &[Mode::Rain, Mode::Snow],
+            Mode::FreezingRain => &[Mode::Rain],
+            Mode::AutumnStorm => &[Mode::Autumn, Mode::Rain],
+            Mode::BlossomWind => &[Mode::Blossom],
+            Mode::Snow => &[Mode::Snow],
+            Mode::Autumn => &[Mode::Autumn],
+            Mode::Rain => &[Mode::Rain],
+            Mode::Blossom => &[Mode::Blossom],
+            Mode::Storm => &[Mode::Storm],
+            Mode::Fog => &[Mode::Fog],
+            Mode::Hail => &[Mode::Hail],
+            Mode::Graupel => &[Mode::Graupel],
+        }
+    }
+
+    /// How gusty the wind blows with it, 0 to 1.
+    fn gusts(self) -> f32 {
+        match self {
+            Mode::AutumnStorm => 1.0,
+            Mode::BlossomWind => 0.55,
+            _ => 0.0,
+        }
+    }
 
     /// Falls as rain does, running down the windows: rain, or the storm's.
     pub fn rainy(self) -> bool {
-        self == Mode::Rain || self == Mode::Storm
+        matches!(self, Mode::Rain | Mode::Storm | Mode::Sleet | Mode::FreezingRain | Mode::AutumnStorm)
     }
 
     /// Lies on the ground and the windows in heaps, which can melt, wither or be cleared: snow, leaves and petals.
     pub fn heaps(self) -> bool {
-        matches!(self, Mode::Snow | Mode::Autumn | Mode::Blossom)
+        matches!(self, Mode::Snow | Mode::Autumn | Mode::Blossom | Mode::AutumnStorm | Mode::BlossomWind)
     }
 
     /// Falls as leaves and heaps up as they do: autumn's, or cherry blossom petals.
@@ -156,7 +198,7 @@ impl Mode {
 /// One of each kind, or none, in the order they were picked; nothing at all means snow.
 fn normalized(modes: &[Mode]) -> Vec<Mode> {
     let mut kinds: Vec<Mode> = Vec::new();
-    for &mode in modes {
+    for &mode in modes.iter().flat_map(|mode| mode.parts()) {
         if !kinds.contains(&mode) {
             kinds.push(mode);
         }
@@ -425,6 +467,11 @@ struct Air {
     random: Random,
     clock: f64,
     cursor: Option<V2>,
+    /// What was asked to fall, with kinds made of others as they were picked, how gusty that blows, and whether new
+    /// snowflakes are sleet's wet ones, which fall heavily and melt where they land.
+    asked: Vec<Mode>,
+    gusts: f32,
+    wet_snow: bool,
     cursor_velocity: V2,
     /// How wide the cursor ploughs through what lies, now: wider the faster it goes, while it leaves a trail.
     plow: f32,
@@ -598,6 +645,9 @@ impl SnowSimulation {
                 gust: None,
                 slide_wind: 0.0,
                 modes: vec![Mode::Snow],
+                asked: vec![Mode::Snow],
+                gusts: 0.0,
+                wet_snow: false,
                 targets: [0; MODES],
                 airborne: [0; MODES],
                 look: Look::default(),
@@ -707,6 +757,18 @@ impl SnowSimulation {
     /// These kinds fall, starting at once. A kind only joining what falls already leaves the rest be; otherwise what
     /// falls now turns into the new kinds where it is.
     pub fn set_modes(&mut self, modes: &[Mode]) {
+        self.ask(modes);
+        self.set_kinds(modes);
+    }
+
+    /// Remembers what was asked for, for the touches a kind made of others brings: gusts, wet flakes, ice.
+    fn ask(&mut self, modes: &[Mode]) {
+        self.air.asked = modes.to_vec();
+        self.air.gusts = modes.iter().map(|mode| mode.gusts()).fold(0.0, f32::max);
+        self.air.wet_snow = modes.contains(&Mode::Sleet);
+    }
+
+    fn set_kinds(&mut self, modes: &[Mode]) {
         let modes = normalized(modes);
         if modes == self.air.modes {
             return;
@@ -736,6 +798,7 @@ impl SnowSimulation {
     /// Clears the screen first and lets the other kinds fall only after, from the top. Another kind only joining what
     /// falls already starts falling at once, with nothing to clear.
     pub fn switch_modes(&mut self, modes: &[Mode], direction: f32, calm: bool) {
+        self.ask(modes);
         let modes = normalized(modes);
         if modes == self.air.modes {
             self.next_mode = None;
@@ -747,7 +810,7 @@ impl SnowSimulation {
             return;
         }
         if self.air.modes.iter().all(|mode| modes.contains(mode)) {
-            self.set_modes(&modes);
+            self.set_kinds(&modes);
             return;
         }
         self.next_mode = Some(modes);
@@ -890,7 +953,7 @@ impl SnowSimulation {
             && (self.air.grains.is_empty() || self.air.clock - self.switched_at > 6.0)
             && let Some(next) = self.next_mode.take()
         {
-            self.set_modes(&next);
+            self.set_kinds(&next);
         }
         self.spawn_flakes();
         if self.haunting.on {
@@ -2828,7 +2891,7 @@ impl Air {
         let depth = if near { 1.0 } else { random.next().powf(1.6) };
         let fall_speed = if near { random.range(75.0, 100.0) } else { 16.0 + depth * 50.0 + random.range(0.0, 10.0) };
         let (tint, tint_amount) = palette_tint(&self.look.palette, random);
-        Flake {
+        let mut flake = Flake {
             position: V2::new(random.range(-30.0, width + 30.0), y),
             velocity: V2::new(wind * (0.35 + 0.65 * depth), -fall_speed),
             fall_speed,
@@ -2847,7 +2910,19 @@ impl Air {
             leaf: 0.0,
             kind: Mode::Snow,
             water: 0.0,
+        };
+        if self.wet_snow {
+            // Sleet's flakes are wet clumps: bigger, heavier, falling fast and straight, gone as they land.
+            flake.fall_speed *= 2.8;
+            flake.velocity.y *= 2.8;
+            flake.size *= 1.3;
+            flake.alpha *= 0.8;
+            flake.sway_amount *= 0.3;
+            flake.settles = false;
+            flake.tint = [0.86, 0.9, 0.95];
+            flake.tint_amount = flake.tint_amount.max(0.35);
         }
+        flake
     }
 
     /// A raindrop, drawn as the streak it leaves over the exposure: the nearer, the faster, longer and brighter.
@@ -2940,7 +3015,11 @@ impl Air {
 
     fn breeze(&self) -> f32 {
         let t = self.clock;
-        (10.0 * (t * 0.07).sin() + 6.0 * (t * 0.19 + 1.7).sin() + 3.0 * (t * 0.43 + 4.1).sin()) as f32 * self.look.wind
+        let steady = (10.0 * (t * 0.07).sin() + 6.0 * (t * 0.19 + 1.7).sin() + 3.0 * (t * 0.43 + 4.1).sin()) as f32;
+        // Gusty weather blows in bursts on top, the way the breeze leans, dying down in between.
+        let burst = ((t * 0.31).sin() + 0.6 * (t * 0.83 + 2.0).sin() + 0.3 * (t * 2.1).sin()).max(0.0) as f32;
+        let gust = self.gusts * 11.0 * burst * burst * if steady < 0.0 { -1.0 } else { 1.0 };
+        (steady + gust) * self.look.wind
     }
 
     fn gust_speed(&self) -> f32 {

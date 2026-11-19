@@ -110,9 +110,9 @@ impl Emblem {
             return Emblem::Pumpkin;
         }
         match falling.last().copied().unwrap_or(Mode::Snow) {
-            Mode::Autumn => Emblem::Leaf,
-            Mode::Rain | Mode::Storm | Mode::Hail => Emblem::Rain,
-            Mode::Blossom => Emblem::Blossom,
+            Mode::Autumn | Mode::AutumnStorm => Emblem::Leaf,
+            Mode::Rain | Mode::Storm | Mode::Hail | Mode::Sleet | Mode::FreezingRain => Emblem::Rain,
+            Mode::Blossom | Mode::BlossomWind => Emblem::Blossom,
             _ => Emblem::Snowflake,
         }
     }

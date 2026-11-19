@@ -1435,7 +1435,7 @@ fn picks_a_language_from_system_tags() {
 #[test]
 fn every_new_weather_shows_and_stays_finite() {
     use crate::simulation::Mode;
-    for mode in [Mode::Storm, Mode::Fog, Mode::Hail] {
+    for mode in [Mode::Storm, Mode::Fog, Mode::Hail, Mode::Sleet, Mode::FreezingRain, Mode::Graupel, Mode::AutumnStorm, Mode::BlossomWind] {
         let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.75);
         simulation.set_mode(mode);
         run(&mut simulation, 15.0, AWAY);
@@ -1588,4 +1588,72 @@ fn spindrift_streams_along_the_drifts_in_a_gale() {
     }
     assert!(streamed > 20, "only {streamed} grains of spindrift");
     assert_finite(&simulation);
+}
+
+#[test]
+fn sleet_brings_wet_flakes_that_never_settle() {
+    use crate::simulation::Mode;
+    let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.8);
+    simulation.set_mode(Mode::Sleet);
+    run(&mut simulation, 40.0, AWAY);
+    let sprites = sprites_of(&simulation);
+    assert!(sprites.iter().any(|s| s.rain[0] > 0.0), "no rain in the sleet");
+    assert!(sprites.iter().any(|s| s.rain[0] == 0.0 && s.leaf[0] == 0.0 && s.size > 2.0 && s.size < 30.0), "no flakes in the sleet");
+    assert!(!simulation.has_snow(), "sleet settled as snow");
+}
+
+#[test]
+fn freezing_rain_grows_icicles_under_a_window_and_they_melt() {
+    use crate::simulation::Mode;
+    let mut simulation = SnowSimulation::new(1280.0, 800.0, 0.6);
+    let none = HashSet::new();
+    simulation.update_windows(&[surface(3, 300.0, 600.0, 500.0)], 0.2, &none, &none, false);
+    simulation.set_mode(Mode::FreezingRain);
+    run(&mut simulation, 100.0, AWAY);
+    let icicles: Vec<Sprite> = sprites_of(&simulation).into_iter().filter(|s| s.petal == 8.0).collect();
+    assert!(icicles.len() > 10, "only {} icicles", icicles.len());
+    assert!(icicles.iter().all(|s| s.position.x >= 300.0 && s.position.x <= 800.0 && s.position.y < 600.0 && s.position.y > 540.0));
+    simulation.set_mode(Mode::Snow);
+    run(&mut simulation, 50.0, AWAY);
+    assert_eq!(sprites_of(&simulation).iter().filter(|s| s.petal == 8.0).count(), 0, "icicles never melted");
+}
+
+#[test]
+fn an_autumn_storm_sticks_leaves_to_the_glass_and_blossom_wind_sweeps_swarms() {
+    use crate::simulation::Mode;
+    let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.7);
+    simulation.set_mode(Mode::AutumnStorm);
+    let mut stuck = 0;
+    for _ in 0..(40.0 / DT) as usize {
+        simulation.step(DT, AWAY);
+        // A leaf pressed flat on the glass shows its face square on.
+        stuck = stuck.max(sprites_of(&simulation).iter().filter(|s| s.leaf[0] > 0.0 && s.leaf[2] == 1.0 && s.spin == [0.0, 0.0]).count());
+    }
+    assert!(stuck > 0, "no leaf stuck to the glass");
+    assert!(simulation.raining(), "an autumn storm without rain");
+    assert_finite(&simulation);
+
+    let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.7);
+    simulation.set_mode(Mode::BlossomWind);
+    let mut most = 0;
+    for _ in 0..(30.0 / DT) as usize {
+        simulation.step(DT, AWAY);
+        most = most.max(simulation.weathering_swept());
+    }
+    assert!(most > 40, "a swarm of only {most} petals");
+    assert_finite(&simulation);
+}
+
+#[test]
+fn graupel_lies_longer_than_hail() {
+    use crate::simulation::Mode;
+    let lying = |mode: Mode| {
+        // Lightly, so neither comes near how many may lie at once.
+        let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.0);
+        simulation.set_mode(mode);
+        run(&mut simulation, 25.0, AWAY);
+        sprites_of(&simulation).iter().filter(|s| s.velocity == V2::ZERO && s.position.y < 60.0 && s.size < 5.0).count()
+    };
+    let (graupel, hail) = (lying(Mode::Graupel), lying(Mode::Hail));
+    assert!(graupel > hail * 2, "graupel {graupel}, hail {hail}");
 }

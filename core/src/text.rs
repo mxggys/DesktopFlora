@@ -68,6 +68,11 @@ fn mode_key(mode: Mode) -> &'static str {
         Mode::Storm => "storm",
         Mode::Fog => "fog",
         Mode::Hail => "hail",
+        Mode::Sleet => "sleet",
+        Mode::FreezingRain => "freezing_rain",
+        Mode::Graupel => "graupel",
+        Mode::AutumnStorm => "autumn_storm",
+        Mode::BlossomWind => "blossom_wind",
     }
 }
 

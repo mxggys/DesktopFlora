@@ -787,7 +787,7 @@ SpriteOut spriteVertex(SpriteIn s) {
     o.leaf = float4(0.0, 0.0, 0.0, 0.0);
     o.smear = float4(0.0, 0.0, 0.0, 0.0);
     o.rain = float4(0.0, 0.0, 0.0, 0.0);
-    // Five marks the moon, six a drop left on the glass and seven a bank of fog; a snowflake has none of them.
+    // Five marks the moon, six a drop left on the glass, seven a bank of fog and eight an icicle; a snowflake has none.
     o.petal = s.petal > 1.5 ? s.petal : 0.0;
     if (s.ghost.x > 0.0) {
         o.spin = time + s.ghost.x * 40.0;
@@ -969,6 +969,24 @@ float4 spriteFragment(SpriteOut i) : SV_Target {
     float t = span > 0.0 ? clamp(dot(p, half_) / span, -1.0, 1.0) : 0.0;
     float2 d = p - half_ * t;
     float r = length(d) / max(i.radius, 0.001);
+    [branch] if (i.petal > 7.5) {
+        // An icicle hanging from its top: a narrowing cone of clear ice, a bright streak down one side where it
+        // catches the light, darker along the other, a drop of light at its tip.
+        float2 c = d / max(i.radius, 0.001);
+        float along = saturate(0.5 - c.y * 0.5);
+        float half_ = i.lump * pow(1.0 - along, 0.85) + 0.015;
+        float across = c.x / half_;
+        float body = (1.0 - smoothstep(0.75, 1.0, abs(across))) * step(along, 0.995);
+        if (body < 0.002) discard;
+        // Rings where it froze drip by drip.
+        float rings = 0.92 + 0.08 * sin(along * 38.0 + i.lump * 50.0);
+        float shine = exp(-pow((across + 0.45) / 0.22, 2.0)) * 0.9;
+        float shade = smoothstep(0.1, 1.0, across) * 0.25;
+        float tip = exp(-pow((along - 0.97) / 0.03, 2.0)) * 0.5;
+        float a = body * (0.38 + 0.4 * shine + 0.15 * along) * rings * i.alpha;
+        float3 ice = lerp(i.tint.rgb * (0.85 - shade), float3(1.0, 1.0, 1.0), saturate(shine + tip)) * light.rgb;
+        return float4(ice * a, a);
+    }
     [branch] if (i.petal > 6.5) {
         // A bank of fog: wide and flat, thinning out at its ends and edges into wisps that drift and change slowly.
         float2 c = d / max(i.radius, 0.001);
