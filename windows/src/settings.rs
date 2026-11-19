@@ -734,21 +734,14 @@ struct Painter<'a> {
 }
 
 /// What falls, in the order the tiles show them, with their signs.
-const KINDS: [(Mode, &str); 14] = [
+const KINDS: [(Mode, &str); 7] = [
     (Mode::Snow, "❄"),
     (Mode::Autumn, "❦"),
     (Mode::Rain, "☂"),
     (Mode::Blossom, "✿"),
-    (Mode::Stars, "✦"),
     (Mode::Storm, "⚡"),
     (Mode::Fog, "≋"),
-    (Mode::Confetti, "❖"),
-    (Mode::Fireworks, "✺"),
     (Mode::Hail, "❅"),
-    (Mode::Fireflies, "✧"),
-    (Mode::Aurora, "☾"),
-    (Mode::Sandstorm, "≈"),
-    (Mode::Pollen, "✻"),
 ];
 
 /// A kind's name in the person's language.
@@ -864,13 +857,13 @@ impl Painter<'_> {
         self.card(&t("What falls"), &t("Choose it yourself, follow the season where you live, or the weather outside"), Control::Choices(names, chosen, &pick), left, right, y)?;
 
         if source == Source::Chosen {
-            // A big tile per kind, its sign over its name, six to a row; mixed, two can be picked.
-            let columns = 6.0;
+            // A big tile per kind, its sign over its name, four to a row; mixed, two can be picked.
+            let columns = 4.0;
             let width = (right - left - (columns - 1.0) * 8.0) / columns;
             let picked = settings.modes();
             for (i, (mode, sign)) in KINDS.iter().enumerate() {
-                let x = left + (i % 6) as f32 * (width + 8.0);
-                let top = *y + (i / 6) as f32 * (92.0 + 8.0);
+                let x = left + (i % 4) as f32 * (width + 8.0);
+                let top = *y + (i / 4) as f32 * (92.0 + 8.0);
                 let rect = D2D_RECT_F { left: x, top, right: x + width, bottom: top + 92.0 };
                 let selected = picked.contains(mode);
                 if selected {
@@ -884,7 +877,7 @@ impl Painter<'_> {
                 self.glyph(sign, D2D_RECT_F { top: rect.top + 12.0, bottom: rect.top + 54.0, ..rect }, 26.0, ink)?;
                 self.label(&name_of(*mode), D2D_RECT_F { left: rect.left + 4.0, right: rect.right - 4.0, top: rect.top + 58.0, bottom: rect.bottom - 10.0 }, 11.5, selected, ink, 1.0, CENTER)?;
             }
-            let rows = KINDS.len().div_ceil(6) as f32;
+            let rows = KINDS.len().div_ceil(4) as f32;
             *y += rows * 100.0 + GAP + 4.0;
             self.card(&t("Mix two"), &t("Two kinds fall together"), Control::Switch(settings.mixed, Action::Mixed), left, right, y)?;
             let note = if view.halloween_possible { t("Jack-o'-lanterns and ghosts in the snow") } else { t("Only over snow alone") };

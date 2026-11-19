@@ -38,7 +38,7 @@ use crate::welcome::{self, Handlers};
 use snowhush_core::simulation::{Look, Mode};
 use snowhush_core::text::{self, tr};
 use snowhush_core::simulation::Atmosphere;
-use snowhush_core::weather::{Conditions, moon_phase, season};
+use snowhush_core::weather::{Conditions, Season, moon_phase, season};
 
 const CLASS: PCWSTR = w!("DesktopFloraController");
 const TITLE: PCWSTR = w!("DesktopFlora");
@@ -435,10 +435,10 @@ fn with_app(action: impl FnOnce(&App)) {
 fn effective(app: &App, month: u32) -> (u32, Vec<Mode>, f32) {
     let settings = &app.settings;
     let latitude = app.outside.filter(|_| settings.local_weather).map_or(app.home.1, |(_, latitude)| latitude);
-    let seasonal = season(month, latitude);
+    let seasonal = season(month, latitude).weather();
     match app.outside {
         Some((sky, _)) if settings.local_weather => {
-            // As it falls outside; under a dry sky, a pinch of the season's weather, and the stars on a clear night.
+            // As it falls outside; under a dry sky, a pinch of the season's weather.
             let sky = Conditions { coming: sky.coming.filter(|_| settings.heads_up), ..sky };
             let (intensity, modes) = snowhush_core::weather::outside(month, latitude, &sky);
             (intensity, modes, sky.wind)
@@ -658,9 +658,9 @@ fn entries(sliders: bool) -> Option<Vec<Entry>> {
         };
         let mut modes = vec![Entry::toggle(ID_MIXED, tr("mixed"), settings.mixed && chosen, true), Entry::Separator];
         // All in one list, no submenu inside the submenu: what settles first, then what only passes by.
-        modes.extend(Mode::ALL[..5].iter().map(|&mode| kind(mode)));
+        modes.extend(Mode::ALL[..4].iter().map(|&mode| kind(mode)));
         modes.push(Entry::Separator);
-        modes.extend(Mode::ALL[5..].iter().map(|&mode| kind(mode)));
+        modes.extend(Mode::ALL[4..].iter().map(|&mode| kind(mode)));
         modes.extend([
             Entry::Separator,
             Entry::choice(ID_SEASONAL, &t("Season"), settings.seasonal && !settings.local_weather),
@@ -747,18 +747,22 @@ fn accumulate(settings: &Settings, heaps: bool, drawn: bool) -> Vec<Entry> {
 
 
 
+/// The season's name, for the menu and Settings.
+fn season_label(season: Season) -> String {
+    t(match season {
+        Season::Winter => "Winter",
+        Season::Spring => "Spring",
+        Season::Summer => "Summer",
+        Season::Autumn => "Autumn",
+    })
+}
+
 /// A line under Mode on where what falls comes from, while it follows the season or the sky.
 fn status(app: &App, falling: &[Mode]) -> Option<String> {
     let names = falling.iter().map(|&mode| mode_name(mode)).collect::<Vec<_>>().join(" + ");
     let month = unsafe { GetLocalTime() }.wMonth as u32;
     let latitude = app.outside.filter(|_| app.settings.local_weather).map_or(app.home.1, |(_, latitude)| latitude);
-    let season_name = match season(month, latitude) {
-        Mode::Snow => t("Winter"),
-        Mode::Blossom => t("Spring"),
-        Mode::Stars => t("Summer"),
-        Mode::Autumn => t("Autumn"),
-        _ => String::new(),
-    };
+    let season_name = season_label(season(month, latitude));
     if app.settings.local_weather {
         Some(match app.outside {
             Some((Conditions { falling: Some(_), .. }, _)) => fill_in(&t("Outside right now: {}"), &[&names]),
@@ -1049,13 +1053,7 @@ fn view() -> Option<View> {
         let now = unsafe { GetLocalTime() };
         let (intensity, falling, _) = effective(app, now.wMonth as u32);
         let kind = falling.last().copied().unwrap_or(Mode::Snow);
-        let season_name = |mode: Mode| match mode {
-            Mode::Snow => t("Winter"),
-            Mode::Blossom => t("Spring"),
-            Mode::Stars => t("Summer"),
-            Mode::Autumn => t("Autumn"),
-            _ => String::new(),
-        };
+        let season_name = season_label;
         let name = |mode: Mode| text::mode_name(mode).to_string();
         let latitude = app.outside.filter(|_| settings.local_weather).map_or(app.home.1, |(_, latitude)| latitude);
         let this_season = season(now.wMonth as u32, latitude);
@@ -1069,7 +1067,7 @@ fn view() -> Option<View> {
             (first, t("Place: your location from Windows, rounded to about 1 km"))
         } else if settings.seasonal {
             let place = if app.home.0.is_empty() { t("your region") } else { app.home.0.clone() };
-            (format!("{} · {}", name(kind), season_name(kind)), fill_in(&t("Season in {}, from the region set in Windows"), &[&place]))
+            (format!("{} · {}", name(kind), season_name(this_season)), fill_in(&t("Season in {}, from the region set in Windows"), &[&place]))
         } else if !settings.scheduled(now.wHour as u32) {
             (t("Outside the schedule right now"), String::new())
         } else {

@@ -17,7 +17,30 @@ use snowhush_core::simulation::{Look, Mode};
 const KEY: PCWSTR = w!("Software\\DesktopFlora");
 const OLD_KEY: PCWSTR = w!("Software\\Snowhush");
 /// What falls by the number the registry keeps it as: new kinds only ever go on the end.
-const MODES: [Mode; 14] = Mode::ALL;
+/// What falls by the number the settings keep it under, which never changes: the numbers of kinds since taken out stay
+/// unused, and what was saved under one falls back to snow.
+const MODES: [Option<Mode>; 10] = [
+    Some(Mode::Snow),
+    Some(Mode::Autumn),
+    Some(Mode::Rain),
+    Some(Mode::Blossom),
+    None,
+    Some(Mode::Storm),
+    Some(Mode::Fog),
+    None,
+    None,
+    Some(Mode::Hail),
+];
+
+/// The kind saved under a number.
+fn saved_kind(number: u32) -> Option<Mode> {
+    MODES.get(number as usize).copied().flatten()
+}
+
+/// The number a kind is saved under.
+fn saved_number(mode: Mode) -> u32 {
+    MODES.iter().position(|&m| m == Some(mode)).unwrap_or(0) as u32
+}
 
 /// Size and breeze choices, in the panel's order.
 pub const SIZES: [(&str, f32); 3] = [("Small", 0.7), ("Normal", 1.0), ("Large", 1.45)];
@@ -129,8 +152,8 @@ impl Settings {
             stamp
         });
         // DesktopFlora before it was based on Snowhush's own modes kept what fell as `weather`.
-        let weather = read(w!("weather")).and_then(|i| [Mode::Snow, Mode::Rain, Mode::Blossom, Mode::Autumn, Mode::Stars].get(i as usize).copied());
-        let mode = read(w!("mode")).and_then(|i| MODES.get(i as usize).copied()).or(weather).unwrap_or(if read(w!("autumn")).is_some_and(|v| v != 0) {
+        let weather = read(w!("weather")).and_then(|i| [Mode::Snow, Mode::Rain, Mode::Blossom, Mode::Autumn, Mode::Blossom].get(i as usize).copied());
+        let mode = read(w!("mode")).and_then(saved_kind).or(weather).unwrap_or(if read(w!("autumn")).is_some_and(|v| v != 0) {
             Mode::Autumn
         } else {
             Mode::Snow
@@ -205,10 +228,10 @@ impl Settings {
         write(w!("installedAt"), self.installed_at);
         write(w!("halloweenOn"), self.halloween.on as u32);
         write(w!("halloweenSkipped"), self.halloween.skipped);
-        write(w!("mode"), MODES.iter().position(|&m| m == self.mode).unwrap_or(0) as u32);
+        write(w!("mode"), saved_number(self.mode));
         write(w!("mixed"), self.mixed as u32);
-        write(w!("mix0"), MODES.iter().position(|&m| m == self.mix[0]).unwrap_or(0) as u32);
-        write(w!("mix1"), MODES.iter().position(|&m| m == self.mix[1]).unwrap_or(0) as u32);
+        write(w!("mix0"), saved_number(self.mix[0]));
+        write(w!("mix1"), saved_number(self.mix[1]));
         write(w!("autumn"), (self.mode == Mode::Autumn) as u32);
         write(w!("performance"), self.max_performance as u32);
         write(w!("fallingOpacity"), self.opacity);
@@ -292,7 +315,7 @@ impl Settings {
 
 /// Two different kinds read from the settings, or `mode` and another when they don't make a pair.
 fn mix_of(first: Option<u32>, second: Option<u32>, mode: Mode) -> [Mode; 2] {
-    let kind = |i: Option<u32>| i.and_then(|i| MODES.get(i as usize).copied());
+    let kind = |i: Option<u32>| i.and_then(saved_kind);
     match (kind(first), kind(second)) {
         (Some(a), Some(b)) if a != b => [a, b],
         _ => [other_than(mode), mode],

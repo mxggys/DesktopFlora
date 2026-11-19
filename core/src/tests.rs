@@ -731,24 +731,6 @@ fn a_window_swayed_gently_keeps_its_snow() {
     assert!(left > resting * 0.8, "resting {resting}, left after swaying {left}");
 }
 
-#[test]
-fn aurora_and_sandstorm_clear_away_once_unwanted() {
-    use crate::simulation::Mode;
-    for mode in [Mode::Aurora, Mode::Sandstorm] {
-        let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.75);
-        simulation.set_mode(mode);
-        run(&mut simulation, 10.0, AWAY);
-        let shown = simulation.sprite_count();
-        simulation.set_mode(Mode::Snow);
-        run(&mut simulation, 12.0, AWAY);
-        let mut sprites = vec![Sprite::default(); simulation.sprite_count()];
-        let count = simulation.write_sprites(&mut sprites);
-        // Nothing sandy or northern-lit is left: no rays, no dust.
-        let left = sprites[..count].iter().filter(|s| s.petal > 3.5 || (s.tint_amount > 0.99 && s.tint[2] < 0.5)).count();
-        assert!(shown > 0 && left == 0, "{mode:?}: {left} left of {shown}");
-    }
-}
-
 fn shake(simulation: &mut SnowSimulation, id: isize) {
     let none = HashSet::new();
     let mut t = 0.0;
@@ -1451,25 +1433,9 @@ fn picks_a_language_from_system_tags() {
 }
 
 #[test]
-fn stars_twinkle_without_settling_and_take_the_palette() {
-    use crate::simulation::{Look, Mode};
-    let mut simulation = SnowSimulation::new(800.0, 600.0, 0.75);
-    simulation.set_look(Look { size: 1.0, wind: 1.0, palette: vec![[1.0, 0.0, 0.0]] });
-    simulation.set_mode(Mode::Stars);
-    run(&mut simulation, 30.0, AWAY);
-    assert!(simulation.sprite_count() > 0);
-    let mut sprites = vec![Sprite::default(); simulation.sprite_count()];
-    let count = simulation.write_sprites(&mut sprites);
-    let stars: Vec<&Sprite> = sprites[..count].iter().filter(|s| s.petal == 2.0).collect();
-    assert!(!stars.is_empty(), "no stars drawn");
-    assert!(stars.iter().all(|s| s.tint == [1.0, 0.0, 0.0]));
-    assert!(!simulation.has_snow(), "stars settled");
-}
-
-#[test]
 fn every_new_weather_shows_and_stays_finite() {
     use crate::simulation::Mode;
-    for mode in [Mode::Storm, Mode::Fog, Mode::Confetti, Mode::Fireworks, Mode::Hail, Mode::Fireflies, Mode::Aurora, Mode::Sandstorm] {
+    for mode in [Mode::Storm, Mode::Fog, Mode::Hail] {
         let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.75);
         simulation.set_mode(mode);
         run(&mut simulation, 15.0, AWAY);
@@ -1496,22 +1462,22 @@ fn a_storm_rains_and_flashes() {
 }
 
 #[test]
-fn fog_and_fireflies_fade_once_unwanted() {
+fn fog_fades_once_unwanted() {
     use crate::simulation::Mode;
     let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.75);
-    simulation.set_modes(&[Mode::Fog, Mode::Fireflies]);
+    simulation.set_modes(&[Mode::Fog]);
     run(&mut simulation, 8.0, AWAY);
     assert!(simulation.sprite_count() > 0);
     simulation.set_modes(&[Mode::Snow]);
     simulation.set_intensity(0.0);
     run(&mut simulation, 8.0, AWAY);
-    assert_eq!(simulation.sprite_count(), 0, "fog or fireflies stayed");
+    assert_eq!(simulation.sprite_count(), 0, "fog stayed");
 }
 
 #[test]
-fn hail_and_confetti_come_to_rest_on_the_ground() {
+fn hail_comes_to_rest_on_the_ground() {
     use crate::simulation::Mode;
-    for mode in [Mode::Hail, Mode::Confetti] {
+    for mode in [Mode::Hail] {
         let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.5);
         simulation.set_mode(mode);
         run(&mut simulation, 25.0, AWAY);
@@ -1523,32 +1489,9 @@ fn hail_and_confetti_come_to_rest_on_the_ground() {
 }
 
 #[test]
-fn a_fast_cursor_kicks_lying_confetti_back_up() {
-    use crate::simulation::Mode;
-    let lying = |simulation: &SnowSimulation| {
-        let mut sprites = vec![Sprite::default(); simulation.sprite_count()];
-        let count = simulation.write_sprites(&mut sprites);
-        sprites[..count].iter().filter(|s| s.petal > 2.5 && s.petal < 3.5 && s.lump == 0.5 && s.position.x > 100.0 && s.position.x < 1100.0).count()
-    };
-    let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.75);
-    simulation.set_mode(Mode::Confetti);
-    run(&mut simulation, 25.0, AWAY);
-    simulation.set_intensity(0.0);
-    let before = lying(&simulation);
-    // Swept back and forth along the ground, fast.
-    for n in 0..120 {
-        let x = 100.0 + 1000.0 * ((n % 40) as f32 / 40.0);
-        simulation.step(DT, V2::new(x, 6.0));
-    }
-    let after = lying(&simulation);
-    assert!(before > 20 && after < before / 2, "lying before {before}, after sweeping {after}");
-    assert_finite(&simulation);
-}
-
-#[test]
 fn a_pinch_still_shows_something() {
     use crate::simulation::Mode;
-    for (mode, amount) in [(Mode::Autumn, 0.08), (Mode::Snow, 0.04), (Mode::Blossom, 0.05), (Mode::Stars, 0.10)] {
+    for (mode, amount) in [(Mode::Autumn, 0.08), (Mode::Snow, 0.04), (Mode::Blossom, 0.05)] {
         let mut simulation = SnowSimulation::new(1600.0, 900.0, amount);
         simulation.set_mode(mode);
         run(&mut simulation, 20.0, AWAY);
@@ -1611,7 +1554,7 @@ fn drops_stay_on_the_glass_after_rain_and_dry() {
     let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.75);
     simulation.set_mode(Mode::Rain);
     run(&mut simulation, 40.0, AWAY);
-    simulation.set_mode(Mode::Stars);
+    simulation.set_mode(Mode::Fog);
     run(&mut simulation, 1.0, AWAY);
     let drops = sprites_of(&simulation).iter().filter(|s| s.petal == 6.0).count();
     assert!(drops > 20, "only {drops} drops left on the glass");
@@ -1632,14 +1575,8 @@ fn the_moon_shows_in_its_phase() {
 }
 
 #[test]
-fn dandelion_seeds_float_and_spindrift_streams_in_a_gale() {
+fn spindrift_streams_along_the_drifts_in_a_gale() {
     use crate::simulation::{Look, Mode};
-    let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.6);
-    simulation.set_mode(Mode::Pollen);
-    run(&mut simulation, 10.0, AWAY);
-    assert!(sprites_of(&simulation).iter().any(|s| s.petal == 2.0), "no seeds");
-    assert_finite(&simulation);
-
     let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.8);
     simulation.set_mode(Mode::Snow);
     run(&mut simulation, 60.0, AWAY);

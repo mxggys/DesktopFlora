@@ -1,7 +1,6 @@
 //! What the weather does to the screen itself rather than to what falls: frost growing in from the edges, glass misting
 //! over that a quick swipe of the cursor wipes clear, drops left on the glass after rain drying away, and the moon in its
-//! phase at night; and two kinds of drift, dandelion seeds floating in summer air and fine snow streaming along the
-//! drifts in a strong wind.
+//! phase at night; and fine snow streaming along the drifts in a strong wind.
 //!
 //! What only sits there, the frost and the mist once they have grown, and the moon, doesn't keep the screen redrawing.
 
@@ -49,15 +48,6 @@ struct Droplet {
 }
 
 #[derive(Clone, Copy)]
-struct Seed {
-    position: V2,
-    velocity: V2,
-    phase: f32,
-    size: f32,
-    shown: f32,
-}
-
-#[derive(Clone, Copy)]
 struct Powder {
     position: V2,
     velocity: V2,
@@ -80,7 +70,6 @@ pub(super) struct Weathering {
     phase: f32,
     droplets: Vec<Droplet>,
     was_raining: f32,
-    seeds: Vec<Seed>,
     powder: Vec<Powder>,
     last_cursor: Option<V2>,
 }
@@ -100,7 +89,6 @@ impl Default for Weathering {
             phase: 0.0,
             droplets: Vec::new(),
             was_raining: 0.0,
-            seeds: Vec::new(),
             powder: Vec::new(),
             last_cursor: None,
         }
@@ -117,7 +105,7 @@ impl Weathering {
     }
 
     pub(super) fn sprite_count(&self) -> usize {
-        self.frost_shown() + self.mist_shown() + if self.moon > 0.0 { 2 } else { 0 } + self.droplets.len() + self.seeds.len() * 2 + self.powder.len()
+        self.frost_shown() + self.mist_shown() + if self.moon > 0.0 { 2 } else { 0 } + self.droplets.len() + self.powder.len()
     }
 
     /// What is drawn but only sits there, and doesn't need the screen redrawn for its sake.
@@ -245,43 +233,6 @@ impl SnowSimulation {
         }
         w.droplets.retain(|drop| drop.age < drop.life);
 
-        // Dandelion seeds: floating on the summer air, rising and sinking on it, carried along by the breeze.
-        let seed_target = if wants(Mode::Pollen) { ((14.0 + 70.0 * amount) * area).min(220.0) as usize } else { 0 };
-        while w.seeds.len() < seed_target {
-            let random = &mut w.random;
-            w.seeds.push(Seed {
-                position: V2::new(random.range(0.0, width), random.range(height * 0.05, height * 0.95)),
-                velocity: V2::new(random.range(-8.0, 8.0), random.range(-6.0, 6.0)),
-                phase: random.range(0.0, TAU),
-                size: random.range(7.0, 12.0),
-                shown: 0.0,
-            });
-        }
-        for (i, seed) in w.seeds.iter_mut().enumerate() {
-            let keep = i < seed_target;
-            seed.shown = (seed.shown + dt / if keep { 3.0 } else { -2.0 }).clamp(0.0, 1.0);
-            seed.phase += dt * 0.6;
-            let lift = (seed.phase).sin() * 9.0 + (seed.phase * 0.37 + 1.3).sin() * 6.0 - 2.5;
-            seed.velocity.x += ((wind * 1.6 + (seed.phase * 0.8).cos() * 6.0) - seed.velocity.x) * (dt * 0.7).min(1.0);
-            seed.velocity.y += (lift - seed.velocity.y) * (dt * 0.8).min(1.0);
-            if let Some(at) = cursor {
-                // The air the cursor moves sends them off, as a breath does.
-                let away = seed.position - at;
-                let distance = away.length();
-                if distance < 90.0 && distance > 0.5 {
-                    seed.velocity += away * (1.0 / distance) * (90.0 - distance) * 1.2 * dt;
-                }
-            }
-            seed.position += seed.velocity * dt;
-            seed.position.x = (seed.position.x + 20.0).rem_euclid(width + 40.0) - 20.0;
-            if seed.position.y < floor(seed.position.x) + 10.0 {
-                seed.velocity.y = seed.velocity.y.abs() + 4.0;
-            } else if seed.position.y > height + 20.0 {
-                seed.position.y = -10.0;
-            }
-        }
-        w.seeds.retain(|seed| seed.shown > 0.0 || seed_target > 0);
-
         // Spindrift: in a strong wind, fine snow lifts off the drifts along the ground and streams along them.
         let strength = smoothstep(9.0, 22.0, wind.abs());
         let snowy = wants(Mode::Snow) || ground.top > 1.0;
@@ -349,26 +300,10 @@ impl SnowSimulation {
         halo.into_iter().chain(disc)
     }
 
-    /// Seeds and spindrift, then what is on the glass, in front of everything: drops, frost, and mist over it all.
+    /// Spindrift, then what is on the glass, in front of everything: drops, frost, and mist over it all.
     pub(super) fn glass_sprites(&self) -> impl Iterator<Item = Sprite> + '_ {
         let w = &self.weathering;
         let opacity = self.falling_opacity;
-        let seeds = w.seeds.iter().flat_map(move |seed| {
-            let alpha = 0.75 * smoothstep(0.0, 1.0, seed.shown) * opacity;
-            [
-                // Its fluffy crown, with the fine rays of its hairs, and its seed hanging under it.
-                Sprite { position: seed.position, size: seed.size, alpha: alpha * 0.8, soft: 0.6, tint_amount: 1.0, tint: [1.0, 1.0, 0.97], petal: 2.0, ..Sprite::default() },
-                Sprite {
-                    position: seed.position - V2::new(0.0, seed.size * 0.45),
-                    size: 1.8,
-                    alpha,
-                    soft: 0.3,
-                    tint_amount: 1.0,
-                    tint: [0.55, 0.45, 0.32],
-                    ..Sprite::default()
-                },
-            ]
-        });
         let powder = w.powder.iter().map(move |grain| {
             let t = grain.age / grain.life;
             Sprite {
@@ -424,7 +359,7 @@ impl SnowSimulation {
                 ..Sprite::default()
             }
         });
-        seeds.chain(powder).chain(drops).chain(frost).chain(mist)
+        powder.chain(drops).chain(frost).chain(mist)
     }
 }
 

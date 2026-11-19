@@ -102,30 +102,16 @@ pub enum Mode {
     Autumn,
     Rain,
     Blossom,
-    /// Tiny lights that drift down slowly and twinkle, without settling.
-    Stars,
     /// Heavy, slanting rain with lightning flashing across the sky.
     Storm,
     /// Faint, soft fog drifting sideways near the bottom of the screen.
     Fog,
-    /// Bright confetti tumbling down and lying a while on the ground.
-    Confetti,
-    /// Rockets climbing and bursting into balls of sparks.
-    Fireworks,
     /// Hailstones bouncing off the windows and the ground.
     Hail,
-    /// Small lights wandering low and glowing up in a slow pulse.
-    Fireflies,
-    /// Northern lights: green and violet curtains rippling across the top of the screen.
-    Aurora,
-    /// Sand and dust driven across the screen, with leaves tumbling along.
-    Sandstorm,
-    /// Dandelion seeds floating on the summer air.
-    Pollen,
 }
 
 /// How many kinds of `Mode` there are.
-const MODES: usize = 14;
+const MODES: usize = 7;
 
 impl Mode {
     pub const ALL: [Mode; MODES] = [
@@ -133,16 +119,9 @@ impl Mode {
         Mode::Autumn,
         Mode::Rain,
         Mode::Blossom,
-        Mode::Stars,
         Mode::Storm,
         Mode::Fog,
-        Mode::Confetti,
-        Mode::Fireworks,
         Mode::Hail,
-        Mode::Fireflies,
-        Mode::Aurora,
-        Mode::Sandstorm,
-        Mode::Pollen,
     ];
 
     /// Falls as rain does, running down the windows: rain, or the storm's.
@@ -1003,19 +982,15 @@ impl SnowSimulation {
                     ..Sprite::default()
                 };
             }
-            // A star brightens and dims with its phase, and draws with rays: `petal` two marks one.
-            let star = flake.kind == Mode::Stars;
-            let twinkle = if star { 0.55 + 0.45 * (flake.phase * 3.0).sin() } else { 1.0 };
             Sprite {
                 position: flake.position,
                 velocity: flake.velocity,
                 size: flake.size,
-                alpha: flake.alpha * self.falling_opacity * twinkle,
+                alpha: flake.alpha * self.falling_opacity,
                 soft: flake.soft,
                 tint_amount: flake.tint_amount,
                 tint: flake.tint,
                 rain: if flake.rain() { [1.0, 0.0] } else { [0.0; 2] },
-                petal: if star { 2.0 } else { 0.0 },
                 ..Sprite::default()
             }
         });
@@ -2847,9 +2822,6 @@ impl Air {
             }
             return drop;
         }
-        if kind == Mode::Stars {
-            return self.make_star(width, y);
-        }
         let wind = self.wind_speed();
         let random = &mut self.random;
         let near = random.next() < 0.02;
@@ -2874,43 +2846,6 @@ impl Air {
             blown: 0.0,
             leaf: 0.0,
             kind: Mode::Snow,
-            water: 0.0,
-        }
-    }
-
-    /// A star: a small light drifting down slowly and twinkling, drawn with rays around its core, never settling.
-    fn make_star(&mut self, width: f32, y: f32) -> Flake {
-        let wind = self.wind_speed();
-        let random = &mut self.random;
-        let near = random.next() < 0.03;
-        let depth = if near { 1.0 } else { random.next().powf(1.6) };
-        let fall_speed = if near { random.range(14.0, 20.0) } else { 4.0 + depth * 10.0 + random.range(0.0, 3.0) };
-        let warm = random.next() < 0.7;
-        let (own, own_amount) = palette_tint(&self.look.palette, random);
-        Flake {
-            position: V2::new(random.range(-30.0, width + 30.0), y),
-            velocity: V2::new(wind * 0.3 * (0.35 + 0.65 * depth), -fall_speed),
-            fall_speed,
-            size: self.look.size * if near { random.range(8.0, 10.0) } else { 3.0 + depth * 4.0 },
-            depth,
-            alpha: if near { 0.7 } else { 0.5 + depth * 0.45 },
-            soft: 0.35,
-            phase: random.range(0.0, PHASE_WRAP),
-            sway_rate: random.range(0.5, 1.4),
-            sway_amount: random.range(1.0, 2.5),
-            settles: false,
-            mass: 1.0,
-            tint: if own_amount > 0.0 {
-                own
-            } else if warm {
-                [1.0, 0.95, 0.78]
-            } else {
-                [0.8, 0.88, 1.0]
-            },
-            tint_amount: own_amount.max(0.6),
-            blown: 0.0,
-            leaf: 0.0,
-            kind: Mode::Stars,
             water: 0.0,
         }
     }
@@ -3286,12 +3221,9 @@ fn share_of(mode: Mode) -> f32 {
         RAIN_SHARE
     } else if mode == Mode::Storm {
         RAIN_SHARE * 1.7
-    } else if !mode.heaps() && mode != Mode::Stars {
-        // Fog, fireflies, confetti, fireworks and hail keep their own particles, not flakes.
+    } else if !mode.heaps() {
+        // Fog and hail keep their own particles, not flakes.
         0.0
-    } else if mode == Mode::Stars {
-        // A sky of stars is sparser than a snowfall.
-        0.5
     } else {
         1.0
     }

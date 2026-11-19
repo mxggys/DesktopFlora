@@ -65,16 +65,9 @@ fn mode_key(mode: Mode) -> &'static str {
         Mode::Autumn => "autumn",
         Mode::Rain => "rain",
         Mode::Blossom => "blossom",
-        Mode::Stars => "stars",
         Mode::Storm => "storm",
         Mode::Fog => "fog",
-        Mode::Confetti => "confetti",
-        Mode::Fireworks => "fireworks",
         Mode::Hail => "hail",
-        Mode::Fireflies => "fireflies",
-        Mode::Aurora => "aurora",
-        Mode::Sandstorm => "sandstorm",
-        Mode::Pollen => "pollen",
     }
 }
 

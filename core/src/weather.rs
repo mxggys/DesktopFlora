@@ -41,32 +41,51 @@ impl Conditions {
     }
 }
 
-/// The weather of a season at a latitude: snow in winter, blossoms in spring, stars on summer nights, leaves in autumn.
-/// South of the equator the seasons are the other way round; near it, where there are none to speak of, blossoms.
-pub fn season(month: u32, latitude: f64) -> Mode {
+/// The time of year.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Season {
+    Winter,
+    Spring,
+    Summer,
+    Autumn,
+}
+
+impl Season {
+    /// What falls in it: snow in winter, leaves in autumn, blossoms in spring and, lighter, in summer.
+    pub fn weather(self) -> Mode {
+        match self {
+            Season::Winter => Mode::Snow,
+            Season::Spring | Season::Summer => Mode::Blossom,
+            Season::Autumn => Mode::Autumn,
+        }
+    }
+}
+
+/// The season at a latitude in a month. South of the equator the seasons are the other way round; near it, where there
+/// are none to speak of, it is always spring.
+pub fn season(month: u32, latitude: f64) -> Season {
     if latitude.abs() < 23.5 {
-        return Mode::Blossom;
+        return Season::Spring;
     }
     let month = if latitude < 0.0 { (month + 5) % 12 + 1 } else { month };
     match month {
-        3..=5 => Mode::Blossom,
-        6..=8 => Mode::Stars,
-        9..=11 => Mode::Autumn,
-        _ => Mode::Snow,
+        3..=5 => Season::Spring,
+        6..=8 => Season::Summer,
+        9..=11 => Season::Autumn,
+        _ => Season::Winter,
     }
 }
 
 /// What falls and how much while following the sky outside. Rain, snow, storms, hail and fog fall as they do there.
 /// Under a dry sky only a pinch of the season's weather comes: a few leaves in autumn, more of them in the wind,
-/// a few petals in spring, a flake or two in winter, and on a clear night the stars, with fireflies on a warm summer
-/// one.
+/// a few petals in spring and fewer in summer, a flake or two in winter.
 pub fn outside(month: u32, latitude: f64, sky: &Conditions) -> (u32, Vec<Mode>) {
     // Rain or snow within the hour, under a dry sky: it starts with a few drops or flakes, among the season's.
     if sky.falling.is_none()
         && let Some((coming, _)) = sky.coming
     {
-        let seasonal = season(month, latitude);
-        let first = if seasonal == coming || seasonal == Mode::Stars { vec![coming] } else { vec![seasonal, coming] };
+        let seasonal = season(month, latitude).weather();
+        let first = if seasonal == coming { vec![coming] } else { vec![seasonal, coming] };
         return (8, first);
     }
     if let Some((amount, mode)) = sky.falling {
@@ -78,18 +97,13 @@ pub fn outside(month: u32, latitude: f64, sky: &Conditions) -> (u32, Vec<Mode>) 
         return (amount, modes);
     }
     let windy = ((sky.wind_speed - 8.0) / 30.0).clamp(0.0, 1.0);
-    let clear_night = !sky.day && sky.clouds < 45.0;
     let (amount, mode) = match season(month, latitude) {
-        Mode::Autumn => (8.0 + 14.0 * windy, Mode::Autumn),
-        Mode::Blossom => (7.0 + 8.0 * windy, Mode::Blossom),
-        Mode::Snow => (if sky.temperature <= 2.0 { 7.0 } else { 4.0 }, Mode::Snow),
-        // Summer: stars and fireflies at night, dandelion seeds floating by day.
-        _ if !sky.day && sky.temperature >= 14.0 => return (12, if clear_night { vec![Mode::Fireflies, Mode::Stars] } else { vec![Mode::Fireflies] }),
-        _ if !sky.day => (10.0, Mode::Stars),
-        _ => (6.0, Mode::Pollen),
+        Season::Autumn => (8.0 + 14.0 * windy, Mode::Autumn),
+        Season::Spring => (7.0 + 8.0 * windy, Mode::Blossom),
+        Season::Summer => (4.0 + 4.0 * windy, Mode::Blossom),
+        Season::Winter => (if sky.temperature <= 2.0 { 7.0 } else { 4.0 }, Mode::Snow),
     };
-    let amount = amount.round() as u32;
-    if clear_night && mode != Mode::Stars { (amount, vec![Mode::Stars, mode]) } else { (amount, vec![mode]) }
+    (amount.round() as u32, vec![mode])
 }
 
 /// How far the moon is through its cycle at a moment, in seconds since 1970: 0 at new moon, 0.5 at full.
@@ -253,14 +267,9 @@ mod tests {
         assert!(few <= 10 && more > few * 2, "calm {few}, windy {more}");
         assert_eq!(outside(4, 52.5, &calm).1, vec![Mode::Blossom]);
         assert!(outside(1, 52.5, &calm).0 <= 8);
-        // A clear autumn night: the stars come out over the leaves.
-        let night = sky(0, &[("is_day", "0"), ("cloud_cover", "10"), ("temperature_2m", "6")]);
-        assert_eq!(outside(10, 52.5, &night).1, vec![Mode::Stars, Mode::Autumn]);
-        // A warm summer night has fireflies under the stars; a summer day only a few petals.
-        let summer_night = sky(0, &[("is_day", "0"), ("cloud_cover", "10"), ("temperature_2m", "19")]);
-        assert_eq!(outside(7, 52.5, &summer_night).1, vec![Mode::Fireflies, Mode::Stars]);
-        let summer_day = sky(0, &[("temperature_2m", "24")]);
-        assert_eq!(outside(7, 52.5, &summer_day), (6, vec![Mode::Pollen]));
+        // A summer day has fewer petals than a spring one.
+        let summer_day = sky(0, &[("temperature_2m", "24"), ("wind_speed_10m", "4"), ("wind_gusts_10m", "6")]);
+        assert_eq!(outside(7, 52.5, &summer_day), (4, vec![Mode::Blossom]));
     }
 
     #[test]
@@ -301,14 +310,14 @@ mod tests {
     #[test]
     fn seasons_follow_the_hemisphere() {
         // Berlin and Sydney in November, and in July.
-        assert_eq!(season(11, 52.5), Mode::Autumn);
-        assert_eq!(season(11, -33.9), Mode::Blossom);
-        assert_eq!(season(7, 52.5), Mode::Stars);
-        assert_eq!(season(7, -33.9), Mode::Snow);
-        assert_eq!(season(1, 52.5), Mode::Snow);
-        assert_eq!(season(1, -33.9), Mode::Stars);
+        assert_eq!(season(11, 52.5), Season::Autumn);
+        assert_eq!(season(11, -33.9), Season::Spring);
+        assert_eq!(season(7, 52.5), Season::Summer);
+        assert_eq!(season(7, -33.9), Season::Winter);
+        assert_eq!(season(1, 52.5), Season::Winter);
+        assert_eq!(season(1, -33.9), Season::Summer);
         // Singapore has no seasons to speak of.
-        assert_eq!(season(1, 1.3), Mode::Blossom);
+        assert_eq!(season(1, 1.3), Season::Spring);
     }
 
     #[test]

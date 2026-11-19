@@ -787,7 +787,7 @@ SpriteOut spriteVertex(SpriteIn s) {
     o.leaf = float4(0.0, 0.0, 0.0, 0.0);
     o.smear = float4(0.0, 0.0, 0.0, 0.0);
     o.rain = float4(0.0, 0.0, 0.0, 0.0);
-    // Two marks a star, drawn with rays, and three a piece of confetti; a snowflake has neither.
+    // Five marks the moon, six a drop left on the glass and seven a bank of fog; a snowflake has none of them.
     o.petal = s.petal > 1.5 ? s.petal : 0.0;
     if (s.ghost.x > 0.0) {
         o.spin = time + s.ghost.x * 40.0;
@@ -1015,47 +1015,6 @@ float4 spriteFragment(SpriteOut i) : SV_Target {
         float3 face = i.tint.rgb * tone * light.rgb;
         float a = disc * (0.08 + 0.92 * lit) * i.alpha;
         return float4(face * a, a);
-    }
-    [branch] if (i.petal > 3.5) {
-        // A ray of northern lights: a soft column rising from a bright foot and fading upward, green turning violet
-        // toward its top, shimmering as light runs up it.
-        float2 c = d / max(i.radius, 0.001);
-        float v = saturate(c.y * 0.5 + 0.5);
-        float column = exp(-c.x * c.x * 6.0);
-        float rise = smoothstep(0.0, 0.08, v) * pow(1.0 - v, 1.4);
-        float shimmer = 0.7 + 0.3 * sin(v * 9.0 - time * 1.6 + i.lump * 40.0);
-        float glow = column * rise * shimmer * i.alpha;
-        if (glow < 0.002) discard;
-        float3 top = float3(0.74, 0.4, 0.98);
-        float3 color = lerp(i.tint.rgb, top, smoothstep(0.3, 0.95, v) * 0.7) * light.rgb;
-        // Light added to the sky more than laid over it.
-        return float4(color * glow, glow * 0.5);
-    }
-    [branch] if (i.petal > 2.5) {
-        // A piece of confetti: a little strip turning as it falls, and flipping, so it narrows and catches the light.
-        float cs = cos(i.spin);
-        float sn = sin(i.spin);
-        float2 c = d / max(i.radius, 0.001);
-        c = float2(c.x * cs - c.y * sn, c.x * sn + c.y * cs);
-        float flip = abs(cos(i.spin * 0.7 + i.lump * 5.0));
-        float halfHeight = max(0.42 * flip, 0.06);
-        float edge = 0.08;
-        float inside = (1.0 - smoothstep(1.0 - edge, 1.0, abs(c.x))) * (1.0 - smoothstep(halfHeight - edge * 0.5, halfHeight, abs(c.y)));
-        float piece = inside * i.alpha;
-        if (piece < 0.002) discard;
-        float3 paper = i.tint.rgb * (0.62 + 0.38 * flip) * light.rgb;
-        // A glint across it as it turns face on.
-        paper = lerp(paper, float3(1.0, 1.0, 1.0), pow(flip, 24.0) * 0.35);
-        return float4(paper * piece, piece);
-    }
-    [branch] if (i.petal > 1.5) {
-        // A star: a bright core with four soft rays.
-        float2 s = d / max(i.radius, 0.001);
-        float rays = exp(-abs(s.x) * 12.0) * exp(-abs(s.y) * 2.6) + exp(-abs(s.y) * 12.0) * exp(-abs(s.x) * 2.6);
-        float glow = saturate(rays + exp(-dot(s, s) * 16.0)) * i.alpha;
-        if (glow < 0.002) discard;
-        float3 starlight = lerp(float3(1.0, 1.0, 1.0), i.tint.rgb, i.tint.a * 0.75) * light.rgb;
-        return float4(starlight * glow, glow);
     }
     float shading = 0.0;
     if (i.lump > 0.0) {

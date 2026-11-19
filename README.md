@@ -1,14 +1,14 @@
 🌿 DesktopFlora
 
-DesktopFlora is a modern Windows application designed to enhance your desktop experience. Snow, autumn leaves, rain, cherry blossoms, stars, thunderstorms, fog, confetti, fireworks, hail, fireflies, northern lights or a sandstorm fill your desktop, settle on your windows and follow the real-time weather outside or the season where you live.
+DesktopFlora is a modern Windows application designed to enhance your desktop experience. Snow, autumn leaves, rain, cherry blossoms, thunderstorms, fog or hail fill your desktop, settle on your windows and follow the real-time weather outside or the season where you live.
 
 It is based on [Snowhush](https://github.com/mbezruchko/Snowhush) by Mykhailo Bezruchko.
 
 ✨ Features
 
-🌧️ Dynamic Weather Integration: Follows the weather outside (rain, snow and how heavy it is, wind) and, under a dry sky, the season where you live: snow in winter, blossoms in spring, stars in summer, leaves in autumn.
+🌧️ Dynamic Weather Integration: Follows the weather outside (rain, snow and how heavy it is, wind) and, under a dry sky, a pinch of the season where you live: snow in winter, blossoms in spring and summer, leaves in autumn.
 
-❄️ Fourteen kinds of weather: snow that piles up and slides off windows, autumn leaves drawn from photos, rain running down your windows, cherry blossoms, twinkling stars, thunderstorms with lightning, drifting fog, tumbling confetti, fireworks, bouncing hail fireflies that shy away from the cursor, northern lights rippling over the sky and a sandstorm sweeping dust and leaves across the screen, and dandelion seeds floating on summer air. Mix two, or turn on Halloween. Shake a window and everything lying on it falls off; sweep the mouse fast and it ploughs a trail through the snow and whirls up leaves, sand and confetti.
+❄️ Seven kinds of weather: snow that piles up and slides off windows, autumn leaves drawn from photos, rain running down your windows, cherry blossoms, thunderstorms with lightning and gathering cloud, fog drifting in banks and bouncing hail. Mix two, or turn on Halloween. Shake a window and everything lying on it falls off; sweep the mouse fast and it ploughs a trail through the snow and whirls up leaves, sand and confetti.
 
 🪟 The weather on the glass: frost flowers grow in from the edges when it freezes, the screen mists over in cold, damp weather (a quick swipe wipes it), drops stay on the glass after rain and dry, the real moon shows at night in its phase, and fine snow streams along the drifts in a strong wind.
 
