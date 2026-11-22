@@ -79,7 +79,8 @@ struct Uniforms {
     blossom: f32,
     /// One while fallen leaves wither away.
     wilt: f32,
-    padding: f32,
+    /// Two when the desktop picture is right behind the snow, one when it is only the light around it, zero without one.
+    backdrop: f32,
 }
 
 /// Where a sign stands: its stick's foot, its size in points, how far it is turned and the drift's surface it comes up out of.
@@ -419,9 +420,39 @@ pub struct Surface {
     height_capacity: usize,
     /// The field drops on the glass add up into, as big as the swap chain; made while there are any.
     field: Option<(ID3D11RenderTargetView, ID3D11ShaderResourceView)>,
+    /// The desktop picture behind this display, small, and whether it is what is right behind the snow: it is, when
+    /// the snow falls behind the windows.
+    backdrop: Option<ID3D11ShaderResourceView>,
+    pub backdrop_behind: bool,
 }
 
 impl Surface {
+    /// Puts the desktop picture on the graphics card, or takes it off.
+    pub fn set_backdrop(&mut self, gpu: &Gpu, image: Option<&(u32, u32, Vec<u8>)>) {
+        self.backdrop = image.and_then(|(width, height, pixels)| {
+            let desc = D3D11_TEXTURE2D_DESC {
+                Width: *width,
+                Height: *height,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_IMMUTABLE,
+                BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                CPUAccessFlags: 0,
+                MiscFlags: 0,
+            };
+            let data = D3D11_SUBRESOURCE_DATA { pSysMem: pixels.as_ptr().cast(), SysMemPitch: width * 4, SysMemSlicePitch: 0 };
+            let mut texture = None;
+            let mut view = None;
+            unsafe {
+                gpu.device.CreateTexture2D(&desc, Some(&data), Some(&mut texture)).ok()?;
+                gpu.device.CreateShaderResourceView(&texture?, None, Some(&mut view)).ok()?;
+            }
+            view
+        });
+    }
+
     /// Snow is soft enough that one pixel per DIP is indistinguishable from the panel's full resolution,
     /// so the swap chain is DIP-sized and composition scales it up.
     pub fn new(gpu: &Gpu, window: HWND, width: u32, height: u32, scale: (f32, f32)) -> Result<Surface> {
@@ -466,6 +497,8 @@ impl Surface {
                 heights: None,
                 height_capacity: 0,
                 field: None,
+                backdrop: None,
+                backdrop_behind: false,
             })
         }
     }
@@ -541,8 +574,18 @@ impl Surface {
                 autumn: if simulation.leafy() { 1.0 } else { 0.0 },
                 blossom: if simulation.blossom() { 1.0 } else { 0.0 },
                 wilt: if simulation.wilts() { 1.0 } else { 0.0 },
-                padding: 0.0,
+                backdrop: match (&self.backdrop, self.backdrop_behind) {
+                    (None, _) => 0.0,
+                    (Some(_), true) => 2.0,
+                    (Some(_), false) => 1.0,
+                },
             };
+            if let Some(backdrop) = &self.backdrop {
+                context.VSSetShaderResources(5, Some(&[Some(backdrop.clone())]));
+                context.PSSetShaderResources(5, Some(&[Some(backdrop.clone())]));
+                context.VSSetSamplers(2, Some(&[Some(gpu.sampler.clone())]));
+                context.PSSetSamplers(2, Some(&[Some(gpu.sampler.clone())]));
+            }
 
             // The pumpkins go down before the snow, so the drift they sit in covers their bottoms.
             if !pumpkins.is_empty()

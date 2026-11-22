@@ -25,9 +25,40 @@ cbuffer Uniforms : register(b0) {
     float blossom;
     // One while fallen leaves wither away.
     float wilt;
+    // Two when the desktop picture is right behind the snow, one when it only lights it, zero without one.
+    float backdrop;
 };
 
 Buffer<float> heights : register(t0);
+
+// The desktop picture, small, covering the display as Windows shows it.
+Texture2D<float4> backdropPicture : register(t5);
+SamplerState backdropSampler : register(s2);
+
+// The light and colour around a point, in points from the bottom left, from the desktop picture: a little blurred, as
+// light falling on a flake from all around it is. Its alpha is zero without a picture.
+float4 surroundings(float2 at) {
+    [branch] if (backdrop < 0.5) return float4(0.0, 0.0, 0.0, 0.0);
+    float2 uv = float2(at.x / viewSize.x, 1.0 - at.y / viewSize.y);
+    float2 spread = float2(0.025, 0.025 * viewSize.x / max(viewSize.y, 1.0));
+    float3 sum = backdropPicture.SampleLevel(backdropSampler, uv, 0).rgb * 0.4;
+    sum += backdropPicture.SampleLevel(backdropSampler, uv + float2(spread.x, 0.0), 0).rgb * 0.15;
+    sum += backdropPicture.SampleLevel(backdropSampler, uv - float2(spread.x, 0.0), 0).rgb * 0.15;
+    sum += backdropPicture.SampleLevel(backdropSampler, uv + float2(0.0, spread.y), 0).rgb * 0.15;
+    sum += backdropPicture.SampleLevel(backdropSampler, uv - float2(0.0, spread.y), 0).rgb * 0.15;
+    return float4(sum, 1.0);
+}
+
+// A colour as lit by what is around it: dimmer before dark parts of the picture, brighter before light ones, and
+// leaning a little toward their hue, as water and ice take on the colours they are seen against. `amount` is how much
+// it takes on, less where the picture is only the light, not what is right behind.
+float3 litBy(float3 color, float4 around, float amount) {
+    [branch] if (around.a <= 0.0) return color;
+    float lum = dot(around.rgb, float3(0.2126, 0.7152, 0.0722));
+    float3 hue = clamp(around.rgb / max(lum, 0.08), 0.45, 1.8);
+    float3 lit = color * (0.66 + 0.5 * lum) * lerp(float3(1.0, 1.0, 1.0), hue, 0.22);
+    return lerp(color, lit, amount * (backdrop > 1.5 ? 1.0 : 0.6));
+}
 
 static const float3 candle = float3(1.0, 0.62, 0.26);
 
@@ -473,6 +504,8 @@ struct SpriteOut {
     // A drop on the glass: its outline's seed, how it has turned as it ran, how far it bulges forward, held back, and
     // how far it is squashed or stretched.
     nointerpolation float4 drop : DROPSHAPE;
+    // The light and colour around it, from the desktop picture.
+    nointerpolation float4 env : ENVIRONMENT;
 };
 
 // A drop hanging under an edge, in radii of the drop, from where it clings. Up to one along, it fills: a small one is
@@ -693,7 +726,10 @@ float4 rainAt(SpriteOut i, float2 p) {
         float core = (1.0 - smoothstep(0.0, 0.7, r)) * strength;
         float a = sheath + core - sheath * core;
         if (a < 0.002) return float4(0.0, 0.0, 0.0, 0.0);
-        return float4(float3(0.22, 0.26, 0.32) * sheath * (1.0 - core) + float3(0.86, 0.9, 0.97) * light.rgb * core, a);
+        // Water shows what is around it: its bright core the light behind it, its sheath that light darkened.
+        float3 bright = litBy(float3(0.86, 0.9, 0.97) * light.rgb, i.env, 0.7);
+        float3 dark = i.env.a > 0.0 ? lerp(float3(0.22, 0.26, 0.32), i.env.rgb * 0.35, 0.5) : float3(0.22, 0.26, 0.32);
+        return float4(dark * sheath * (1.0 - core) + bright * core, a);
     }
     // A running drop or a bead is drawn with the glass, from the field.
     [branch] if (i.rain.x < 2.5) {
@@ -748,8 +784,16 @@ SpriteOut culled() {
     return o;
 }
 
+SpriteOut spriteShape(SpriteIn s, float2 corner);
+
 SpriteOut spriteVertex(SpriteIn s) {
     float2 corner = float2(float(s.vid & 1), float(s.vid >> 1));
+    SpriteOut o = spriteShape(s, corner);
+    o.env = surroundings(s.position);
+    return o;
+}
+
+SpriteOut spriteShape(SpriteIn s, float2 corner) {
     [branch] if (s.leaf.x != 0.0) {
         return leafVertex(s, corner);
     }
@@ -957,7 +1001,9 @@ float4 spriteFragment(SpriteOut i) : SV_Target {
         return ghostColor(i, p, q, side, cover, inside, slope);
     }
     [branch] if (i.leaf.x != 0.0) {
-        return leafSmear(i, p);
+        float4 leafColor = leafSmear(i, p);
+        // Leaves and petals catch the light around them, a little.
+        return float4(litBy(leafColor.rgb, i.env, 0.35), leafColor.a);
     }
     [branch] if (i.rain.x > 0.0) {
         float4 water = rainAt(i, p);
@@ -1000,6 +1046,8 @@ float4 spriteFragment(SpriteOut i) : SV_Target {
         if (a < 0.002) discard;
         // Lit from above, a little brighter on top than underneath.
         float3 color = i.tint.rgb * (0.92 + 0.08 * saturate(c.y + 0.5)) * light.rgb;
+        // Fog takes on the colour of the land it lies over.
+        color = litBy(color, i.env, 0.75);
         return float4(color * a, a);
     }
     [branch] if (i.petal > 5.5) {
@@ -1048,6 +1096,8 @@ float4 spriteFragment(SpriteOut i) : SV_Target {
     float3 edge = float3(0.62, 0.67, 0.77);
     float3 color = lerp(core, edge, saturate(smoothstep(0.35, 1.0, r) * 0.65 + shading));
     color = lerp(color, i.tint.rgb, i.tint.a) * light.rgb;
+    // Snow, hail and the rest pick up the light and colour of what they fall past.
+    color = litBy(color, i.env, 0.55);
     color = lerp(color, candle, i.warm * 0.7);
     a = min(1.0, a * (1.0 + i.warm * 0.8));
     return float4(color * a, a);
@@ -1138,7 +1188,19 @@ float4 glassFragment(GlassOut i) : SV_Target {
 
     float glow = (rimLight + specular + crescent + 0.01) * mask;
     float alpha = shade * mask + shadow;
-    return float4(float3(0.95, 0.975, 1.0) * light.rgb * min(glow, 1.0), alpha);
+    float3 rgb = float3(0.95, 0.975, 1.0) * light.rgb * min(glow, 1.0);
+    // Behind the windows, the desktop picture is right behind each drop, and the drop is a lens: it shows that picture
+    // bent and upside down, smaller, from around it, brightest in its middle.
+    [branch] if (backdrop > 1.5 && mask > 0.0) {
+        float2 size = viewSize * scale;
+        float2 uv = i.position.xy / size;
+        float2 bent = uv - n.xy * 0.05 + (uv - 0.5) * 0.0;
+        float3 seen = backdropPicture.SampleLevel(backdropSampler, bent, 0).rgb * light.rgb;
+        float through = 0.55 * mask * (1.0 - rim * 0.6);
+        rgb += seen * through;
+        alpha = alpha + through - alpha * through;
+    }
+    return float4(rgb, alpha);
 }
 
 struct PileOut {

@@ -246,6 +246,8 @@ pub struct Screen {
     opacity: f32,
     backdrop: Option<Backdrop>,
     shadow_tint: [f32; 4],
+    /// The desktop picture, small, waiting to go to the graphics card: `None` once it has.
+    backdrop_image: Option<Option<(u32, u32, Vec<u8>)>>,
     layer: Option<DesktopLayer>,
     behind_taskbar: bool,
     /// Where the cursor's candlelight was last drawn.
@@ -289,6 +291,7 @@ impl Screen {
             opacity: 1.0,
             backdrop: None,
             shadow_tint: [0.0; 4],
+            backdrop_image: None,
             layer,
             behind_taskbar: settings.behind_taskbar,
             lantern_at: V2::new(-10_000.0, -10_000.0),
@@ -366,6 +369,11 @@ impl Screen {
         // Halloween night: cold moonlight, violet shadows and a candle's glow along the drifts' edges.
         let (light, shadow_tint) = moonlit(sky.daylight, self.shadow_tint, sky.night);
         let ambient = Ambient { light, shadow_tint, rim: [1.0, 0.56, 0.2, 0.3 * sky.night], lantern: (cursor, sky.night) };
+        if let Some(image) = self.backdrop_image.take() {
+            self.surface.set_backdrop(gpu, image.as_ref());
+        }
+        // What lies behind the snow is the desktop picture only when it falls behind the windows.
+        self.surface.backdrop_behind = self.behind_windows();
         self.surface.draw(gpu, &self.simulation, ambient, time)?;
         Ok(true)
     }
@@ -498,6 +506,11 @@ impl Screen {
         }
         self.shadow_tint = backdrop.as_ref().and_then(|backdrop| wallpapers.tint(backdrop)).unwrap_or([0.0; 4]);
         log!("backdrop of {}: {backdrop:?}, shadow {:?}", self.monitor.name, self.shadow_tint);
+        // The picture itself, small, for the light each flake and drop picks up and what drops on the glass show.
+        let bounds = &self.monitor.bounds;
+        let aspect = (bounds.right - bounds.left) as f32 / (bounds.bottom - bounds.top).max(1) as f32;
+        let image = backdrop.as_ref().and_then(|backdrop| wallpapers.image(backdrop, aspect));
+        self.backdrop_image = Some(image);
         self.backdrop = backdrop;
     }
 
