@@ -1278,7 +1278,8 @@ fn rain_runs_down_a_window_and_hangs_under_its_bottom_edge() {
     simulation.set_mode(Mode::Rain);
     simulation.update_windows(&[surface(1, 200.0, 700.0, 800.0)], 0.2, &none, &none, false);
     let (mut ran, mut hung) = (false, false);
-    for _ in 0..(40.0 / DT) as usize {
+    // Long enough that some drop always makes it all the way down: which do is chance.
+    for _ in 0..(90.0 / DT) as usize {
         simulation.step(DT, AWAY);
         ran |= !rain_sprites(&simulation, 2.0).is_empty();
         for drop in rain_sprites(&simulation, 3.0) {
