@@ -56,6 +56,47 @@ pub const SIZES: [(&str, f32); 3] = [("Small", 0.7), ("Normal", 1.0), ("Large", 
 pub const WINDS: [(&str, f32); 3] = [("Still", 0.25), ("Breezy", 1.0), ("Stormy", 3.0)];
 /// When the snow shows: hours from and to, local time; the same hour twice means always.
 pub const SCHEDULES: [(&str, u32, u32); 4] = [("Always", 0, 0), ("Evenings", 17, 23), ("Daytime", 8, 17), ("Nights", 20, 6)];
+/// A ready-made mood: what falls, how much, how it looks, and the touches that go with it.
+pub struct Preset {
+    pub name: &'static str,
+    pub mode: Mode,
+    pub intensity: u32,
+    pub opacity: u32,
+    /// Indices into `SIZES` and `WINDS`.
+    pub size: usize,
+    pub wind: usize,
+    pub frost: bool,
+    pub misted: bool,
+    pub thunder: bool,
+}
+
+pub const PRESETS: [Preset; 6] = [
+    Preset { name: "Cozy", mode: Mode::Snow, intensity: 35, opacity: 80, size: 1, wind: 0, frost: false, misted: false, thunder: false },
+    Preset { name: "Winter Wonderland", mode: Mode::Snow, intensity: 75, opacity: 100, size: 2, wind: 1, frost: true, misted: false, thunder: false },
+    Preset { name: "Autumn Day", mode: Mode::Autumn, intensity: 45, opacity: 100, size: 1, wind: 1, frost: false, misted: false, thunder: false },
+    Preset { name: "Rainy Day", mode: Mode::Rain, intensity: 55, opacity: 90, size: 1, wind: 1, frost: false, misted: true, thunder: false },
+    Preset { name: "Thunderstorm", mode: Mode::Storm, intensity: 80, opacity: 100, size: 1, wind: 2, frost: false, misted: true, thunder: true },
+    Preset { name: "Minimal", mode: Mode::Snow, intensity: 15, opacity: 55, size: 0, wind: 0, frost: false, misted: false, thunder: false },
+];
+
+impl Settings {
+    /// Takes on a preset: what falls and how it looks; the touches it goes with are switched on, none switched off.
+    pub fn take(&mut self, preset: &Preset) {
+        self.local_weather = false;
+        self.seasonal = false;
+        self.paused = false;
+        self.mixed = false;
+        self.mode = preset.mode;
+        self.intensity = preset.intensity;
+        self.opacity = preset.opacity;
+        self.size = preset.size.min(SIZES.len() - 1);
+        self.wind = preset.wind.min(WINDS.len() - 1);
+        self.frost |= preset.frost;
+        self.misted |= preset.misted;
+        self.thunder |= preset.thunder;
+    }
+}
+
 /// Room for colours of one's own.
 pub const MAX_COLORS: usize = 5;
 /// Eco draws at most this many frames a second.
@@ -427,6 +468,25 @@ pub fn excluded_apps() -> Vec<String> {
 
 pub fn set_excluded_apps(apps: &[String]) {
     write_text(w!("excludedApps"), &apps.join("|"));
+}
+
+/// A place picked by name for the weather outside, instead of where Windows says the computer is: its name and where
+/// it lies.
+pub fn place() -> Option<(String, f64, f64)> {
+    let text = read_text(w!("place"))?;
+    let mut parts = text.rsplitn(3, '|');
+    let longitude = parts.next()?.parse().ok()?;
+    let latitude = parts.next()?.parse().ok()?;
+    Some((parts.next()?.to_string(), latitude, longitude))
+}
+
+pub fn set_place(place: Option<(&str, f64, f64)>) {
+    match place {
+        Some((name, latitude, longitude)) => write_text(w!("place"), &format!("{}|{latitude:.4}|{longitude:.4}", name.replace('|', " "))),
+        None => unsafe {
+            let _ = RegDeleteKeyValueW(HKEY_CURRENT_USER, KEY, w!("place"));
+        },
+    }
 }
 
 fn read_text(name: PCWSTR) -> Option<String> {

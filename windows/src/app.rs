@@ -54,6 +54,8 @@ const TIMER_CALLS: usize = 6;
 const CALLS_INTERVAL: u32 = 4_000;
 const WM_UPDATE: u32 = WM_APP + 2;
 const WM_WEATHER: u32 = WM_APP + 3;
+/// A place looked up by name has been found, or not.
+const WM_PLACE: u32 = WM_APP + 9;
 const WM_INSTALLED: u32 = WM_APP + 4;
 /// Open-Meteo works out the weather now every quarter of an hour.
 const WEATHER_INTERVAL: u32 = 15 * 60 * 1000;
@@ -326,6 +328,22 @@ unsafe extern "system" fn procedure(window: HWND, message: u32, wparam: WPARAM, 
         }
         WM_TIMER if wparam.0 == TIMER_WEATHER => {
             check_weather(window, false);
+            LRESULT(0)
+        }
+        WM_PLACE => {
+            let result = unsafe { Box::from_raw(lparam.0 as *mut std::result::Result<(String, f64, f64), String>) };
+            match *result {
+                Ok((name, latitude, longitude)) => {
+                    log!("place: {name}");
+                    prefs::set_place(Some((&name, latitude, longitude)));
+                    set_local_weather(window, true);
+                    check_weather(window, false);
+                }
+                Err(error) => {
+                    self::message(window, &error, MB_OK | MB_ICONWARNING);
+                }
+            }
+            settings::refresh();
             LRESULT(0)
         }
         WM_WEATHER => {
@@ -1065,7 +1083,11 @@ fn view() -> Option<View> {
                 Some(_) => fill_in(&t("Dry outside: {} for the {}"), &[&names, &season_name(this_season)]),
                 None => t("Asking for the weather outside…"),
             };
-            (first, t("Place: your location from Windows, rounded to about 1 km"))
+            let place = match prefs::place() {
+                Some((name, _, _)) => fill_in(&t("Place: {}"), &[&name]),
+                None => t("Place: your location from Windows, rounded to about 1 km"),
+            };
+            (first, place)
         } else if settings.seasonal {
             let place = if app.home.0.is_empty() { t("your region") } else { app.home.0.clone() };
             (format!("{} · {}", name(kind), season_name(this_season)), fill_in(&t("Season in {}, from the region set in Windows"), &[&place]))
@@ -1075,6 +1097,7 @@ fn view() -> Option<View> {
             (String::new(), String::new())
         };
         Some(View {
+            place: prefs::place().map(|(name, _, _)| name),
             on: !settings.paused,
             settings,
             halloween_possible: falling == [Mode::Snow],
@@ -1099,6 +1122,22 @@ fn act(action: Action) {
         Action::Quit => return quit(window),
         Action::Updates => return check_for_updates(window, true),
         Action::Clear => return with_app(|app| send(app, Command::ClearSnow(!prefs::animations_enabled()))),
+        Action::SetPlace(name) => {
+            // Looked up on another thread; the answer comes back as `WM_PLACE`.
+            let target = window.0 as isize;
+            thread::spawn(move || {
+                let result = Box::new(outside::find_place(&name));
+                unsafe {
+                    let _ = PostMessageW(Some(HWND(target as _)), WM_PLACE, WPARAM(0), LPARAM(Box::into_raw(result) as isize));
+                }
+            });
+            return;
+        }
+        Action::ClearPlace => {
+            prefs::set_place(None);
+            check_weather(window, false);
+            return;
+        }
         Action::OpenAtLogin => {
             let on = !prefs::opens_at_login();
             let status = prefs::set_opens_at_login(on);
@@ -1208,6 +1247,12 @@ fn act(action: Action) {
             }
             Action::Opacity(value) => {
                 settings.opacity = value.clamp(10, 100);
+                Some(Command::FallingOpacity(settings.opacity as f32 / 100.0))
+            }
+            Action::Preset(i) => {
+                settings.take(&crate::prefs::PRESETS[i.min(crate::prefs::PRESETS.len() - 1)]);
+                crate::thunder::set_on(settings.thunder);
+                app.outside = None;
                 Some(Command::FallingOpacity(settings.opacity as f32 / 100.0))
             }
             Action::Pick(mode) => {

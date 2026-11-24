@@ -29,7 +29,7 @@ use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegG
 use windows::Win32::UI::Controls::MARGINS;
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyNameTextW, GetKeyState, MAPVK_VK_TO_VSC, MapVirtualKeyW, ReleaseCapture, SetCapture, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent, VK_BACK,
+    GetKeyNameTextW, GetKeyState, MAPVK_VK_TO_VSC, MapVirtualKeyW, ReleaseCapture, SetCapture, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent, VK_BACK, VK_RETURN,
     VK_CONTROL, VK_DELETE, VK_ESCAPE, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -116,6 +116,11 @@ pub enum Action {
     PauseInCalls,
     HeadsUp,
     Thunder,
+    Preset(usize),
+    /// Look this place up and follow its weather.
+    SetPlace(String),
+    /// Follow where Windows says the computer is again.
+    ClearPlace,
     OpenAtLogin,
     Clear,
     /// Keeps the snow off the program last in front.
@@ -153,6 +158,8 @@ pub struct View {
     pub login: bool,
     /// Shortcuts another program already holds.
     pub taken: [bool; 3],
+    /// The place picked by name for the weather outside, if any.
+    pub place: Option<String>,
 }
 
 pub struct Handlers {
@@ -198,6 +205,8 @@ enum Hit {
     Page(usize),
     Capture(usize),
     Slider(Slider),
+    /// Start typing a place's name.
+    Type,
 }
 
 struct Window {
@@ -209,6 +218,8 @@ struct Window {
     hits: Vec<(D2D_RECT_F, Hit)>,
     /// The shortcut waiting for its new keys.
     capturing: Option<usize>,
+    /// A place's name being typed.
+    typing: Option<String>,
     /// The slider being dragged, its track, and the value last sent.
     dragging: Option<(Slider, D2D_RECT_F, u32)>,
     /// How far the page is scrolled down, and how far it can be.
@@ -220,7 +231,20 @@ struct Window {
     target: Option<ID2D1HwndRenderTarget>,
 }
 
+/// The live preview: a little snowfall of its own, falling as the settings say, on the first page.
+struct Preview {
+    simulation: snowhush_core::simulation::SnowSimulation,
+    modes: Vec<Mode>,
+    intensity: u32,
+    look: snowhush_core::simulation::Look,
+    last: std::time::Instant,
+}
+
+const PREVIEW_TIMER: usize = 7;
+const PREVIEW_HEIGHT: f32 = 150.0;
+
 thread_local! {
+    static PREVIEW: RefCell<Option<Preview>> = const { RefCell::new(None) };
     static WINDOW: RefCell<Option<Window>> = const { RefCell::new(None) };
     /// The page to open on next time.
     static LAST_PAGE: Cell<usize> = const { Cell::new(0) };
@@ -307,6 +331,7 @@ fn open(handlers: Handlers) -> Result<()> {
             hover: None,
             hits: Vec::new(),
             capturing: None,
+            typing: None,
             dragging: None,
             scroll: 0.0,
             scroll_limit: 0.0,
@@ -317,6 +342,8 @@ fn open(handlers: Handlers) -> Result<()> {
         }));
         let _ = ShowWindow(window, SW_SHOW);
         let _ = SetForegroundWindow(window);
+        // The live preview moves at 30 frames a second while its page shows.
+        SetTimer(Some(window), PREVIEW_TIMER, 33, None);
     }
     Ok(())
 }
@@ -390,7 +417,26 @@ unsafe extern "system" fn procedure(window: HWND, message: u32, wparam: WPARAM, 
             }
             LRESULT(0)
         }
+        WM_TIMER if wparam.0 == PREVIEW_TIMER => {
+            let on_first_page = WINDOW.with_borrow(|open| open.as_ref().is_some_and(|open| open.page == 0));
+            if on_first_page {
+                PREVIEW.with_borrow_mut(|preview| {
+                    if let Some(preview) = preview {
+                        let now = std::time::Instant::now();
+                        let dt = (now - preview.last).as_secs_f32().min(0.1);
+                        preview.last = now;
+                        preview.simulation.step(dt, snowhush_core::geometry::V2::new(-10_000.0, -10_000.0));
+                    }
+                });
+                paint();
+            }
+            LRESULT(0)
+        }
         WM_DESTROY => {
+            PREVIEW.set(None);
+            unsafe {
+                let _ = KillTimer(Some(window), PREVIEW_TIMER);
+            }
             if let Some(open) = WINDOW.take() {
                 LAST_PAGE.set(open.page);
                 if open.capturing.is_some() {
@@ -479,8 +525,27 @@ unsafe extern "system" fn procedure(window: HWND, message: u32, wparam: WPARAM, 
             }
             LRESULT(0)
         }
+        WM_CHAR => {
+            let typed = char::from_u32(wparam.0 as u32).filter(|c| !c.is_control());
+            let taken = WINDOW.with_borrow_mut(|open| {
+                let Some(open) = open else { return false };
+                let Some(text) = open.typing.as_mut() else { return false };
+                if let Some(c) = typed
+                    && text.chars().count() < 60
+                {
+                    text.push(c);
+                }
+                true
+            });
+            if taken {
+                paint();
+                LRESULT(0)
+            } else {
+                unsafe { DefWindowProcW(window, message, wparam, lparam) }
+            }
+        }
         WM_KEYDOWN | WM_SYSKEYDOWN => {
-            if key(wparam.0 as u32) {
+            if typing_key(wparam.0 as u32) || key(wparam.0 as u32) {
                 LRESULT(0)
             } else {
                 unsafe { DefWindowProcW(window, message, wparam, lparam) }
@@ -501,6 +566,15 @@ fn contains(rect: &D2D_RECT_F, (x, y): (f32, f32)) -> bool {
 fn click(hit: Hit) {
     match hit {
         Hit::Slider(_) => {}
+        Hit::Type => {
+            WINDOW.with_borrow_mut(|open| {
+                if let Some(open) = open {
+                    open.typing = Some(String::new());
+                }
+            });
+            suspend(true);
+            paint();
+        }
         Hit::Page(page) => {
             let was_capturing = WINDOW.with_borrow_mut(|open| {
                 let open = open.as_mut()?;
@@ -563,6 +637,47 @@ fn suspend(on: bool) {
         act(Action::SuspendShortcuts(on));
     }
     put_act(act);
+}
+
+/// A key pressed while a place's name is typed: Backspace, Enter to look it up, Escape to stop. Whether it was taken.
+fn typing_key(code: u32) -> bool {
+    enum Then {
+        Nothing,
+        Edited,
+        Done(Option<String>),
+    }
+    let then = WINDOW.with_borrow_mut(|open| {
+        let Some(open) = open else { return None };
+        let text = open.typing.as_mut()?;
+        Some(if code == VK_BACK.0 as u32 {
+            text.pop();
+            Then::Edited
+        } else if code == VK_RETURN.0 as u32 {
+            Then::Done(open.typing.take().filter(|text| !text.trim().is_empty()))
+        } else if code == VK_ESCAPE.0 as u32 {
+            open.typing = None;
+            Then::Done(None)
+        } else {
+            Then::Nothing
+        })
+    });
+    match then {
+        None => false,
+        Some(Then::Nothing) => true,
+        Some(Then::Edited) => {
+            paint();
+            true
+        }
+        Some(Then::Done(name)) => {
+            suspend(false);
+            if let Some(name) = name {
+                click(Hit::App(Action::SetPlace(name)));
+            } else {
+                paint();
+            }
+            true
+        }
+    }
 }
 
 /// A key pressed in the window: while a shortcut waits for its keys, they become it. Whether the key was taken.
@@ -714,7 +829,7 @@ impl Window {
             target.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
         }
         let mut painter = Painter { target, text: &self.text, colors: palette(self.mica), hits: Vec::new(), hover: self.hover };
-        let drawn = painter.window(view, self.page, self.capturing, self.scroll);
+        let drawn = painter.window(view, self.page, self.capturing, self.typing.as_deref(), self.scroll);
         self.hits = std::mem::take(&mut painter.hits);
         unsafe { target.EndDraw(None, None)? };
         // What the page holds below the window's bottom edge can be scrolled up into view.
@@ -767,7 +882,7 @@ enum Control<'a> {
 
 impl Painter<'_> {
     /// Draws the window, its page scrolled up by `scroll`; returns where the page's content ends.
-    fn window(&mut self, view: &View, page: usize, capturing: Option<usize>, scroll: f32) -> Result<f32> {
+    fn window(&mut self, view: &View, page: usize, capturing: Option<usize>, typing: Option<&str>, scroll: f32) -> Result<f32> {
         let frame = D2D_RECT_F { left: 0.0, top: 0.0, right: WIDTH, bottom: HEIGHT };
         let [r, g, b, a] = self.colors.base;
         self.fill(frame, 0.0, [r, g, b], a)?;
@@ -810,7 +925,7 @@ impl Painter<'_> {
         self.label(&t(title), D2D_RECT_F { left, top: 20.0 - scroll, right, bottom: 64.0 - scroll }, 26.0, true, self.colors.ink, 1.0, LEADING)?;
         let mut y = 84.0 - scroll;
         let drawn = match page {
-            0 => self.overview(view, left, right, &mut y),
+            0 => self.overview(view, left, right, &mut y, typing),
             1 => self.look(view, left, right, &mut y),
             2 => self.behavior(view, left, right, &mut y),
             3 => self.programs(view, left, right, &mut y, capturing),
@@ -839,6 +954,98 @@ impl Painter<'_> {
         Ok(y)
     }
 
+    /// A little window onto what falls, as the settings now have it, falling live.
+    fn preview(&mut self, view: &View, left: f32, right: f32, y: &mut f32) -> Result<()> {
+        use snowhush_core::simulation::{SnowSimulation, Sprite};
+        let rect = D2D_RECT_F { left, top: *y, right, bottom: *y + PREVIEW_HEIGHT };
+        let (width, height) = (right - left, PREVIEW_HEIGHT);
+        let modes = if view.falling.is_empty() { vec![Mode::Snow] } else { view.falling.clone() };
+        let look = view.settings.look();
+        let intensity = view.intensity.max(10);
+        let (sprites, ground) = PREVIEW.with_borrow_mut(|preview| {
+            let preview = preview.get_or_insert_with(|| {
+                let mut simulation = SnowSimulation::new(width, height, intensity as f32 / 100.0);
+                simulation.set_modes(&modes);
+                simulation.set_look(look.clone());
+                // Warmed up, so it opens with the weather already under way.
+                for _ in 0..240 {
+                    simulation.step(1.0 / 60.0, snowhush_core::geometry::V2::new(-10_000.0, -10_000.0));
+                }
+                Preview { simulation, modes: modes.clone(), intensity, look: look.clone(), last: std::time::Instant::now() }
+            });
+            if preview.modes != modes {
+                preview.simulation.set_modes(&modes);
+                preview.modes = modes.clone();
+            }
+            if preview.intensity != intensity {
+                preview.simulation.set_intensity(intensity as f32 / 100.0);
+                preview.intensity = intensity;
+            }
+            if preview.look != look {
+                preview.simulation.set_look(look.clone());
+                preview.look = look.clone();
+            }
+            let simulation = &preview.simulation;
+            let mut sprites = vec![Sprite::default(); simulation.sprite_count()];
+            let count = simulation.write_sprites(&mut sprites);
+            sprites.truncate(count);
+            let mut buffer = vec![0.0; simulation.column_count()];
+            let piles = simulation.write_layers(&mut buffer);
+            let ground = piles.first().map(|pile| (0..pile.count).map(|i| buffer[pile.offset + i] - buffer[pile.offset + pile.count + i]).collect::<Vec<f32>>()).unwrap_or_default();
+            (sprites, ground)
+        });
+        unsafe {
+            // A night sky over a dark landscape, so everything that falls shows.
+            self.fill(rect, 8.0, [0.1, 0.13, 0.19], 1.0)?;
+            self.fill(D2D_RECT_F { top: rect.top + height * 0.55, ..rect }, 8.0, [0.07, 0.09, 0.13], 1.0)?;
+            self.target.PushAxisAlignedClip(&rect, windows::Win32::Graphics::Direct2D::D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            let brush = self.target.CreateSolidColorBrush(&color([1.0; 3], 1.0), None)?;
+            let at = |x: f32, y: f32| Vector2 { X: left + x, Y: rect.bottom - y };
+            // What lies along the bottom.
+            brush.SetColor(&color([0.93, 0.95, 0.98], 0.95));
+            for (i, lying) in ground.iter().enumerate().step_by(2) {
+                if *lying > 0.3 {
+                    let x = i as f32 * snowhush_core::simulation::COLUMN_WIDTH;
+                    self.target.DrawLine(at(x, 0.0), at(x, *lying), &brush, 2.2, None);
+                }
+            }
+            for sprite in &sprites {
+                let alpha = sprite.alpha.clamp(0.0, 1.0);
+                if alpha < 0.01 {
+                    continue;
+                }
+                let p = at(sprite.position.x, sprite.position.y);
+                let tint = |base: [f32; 3]| std::array::from_fn::<f32, 3, _>(|k| base[k] + (sprite.tint[k] - base[k]) * sprite.tint_amount);
+                if sprite.rain[0] > 0.5 && sprite.rain[0] < 1.5 {
+                    brush.SetColor(&color([0.78, 0.85, 0.95], (alpha * 1.6).min(0.8)));
+                    let tail = Vector2 { X: p.X - sprite.velocity.x * 0.028, Y: p.Y + sprite.velocity.y * 0.028 };
+                    self.target.DrawLine(p, tail, &brush, (sprite.size * 0.6).max(0.6), None);
+                } else if sprite.rain[0] > 1.5 || sprite.petal == 6.0 {
+                    brush.SetColor(&color([0.85, 0.92, 1.0], 0.5 * alpha));
+                    self.target.FillEllipse(&D2D1_ELLIPSE { point: p, radiusX: sprite.size * 0.4, radiusY: sprite.size * 0.4 }, &brush);
+                } else if sprite.leaf[0] > 0.0 {
+                    let rgb = if sprite.petal > 0.5 { [0.97, 0.78, 0.84] } else { [[0.78, 0.33, 0.12], [0.85, 0.53, 0.16], [0.72, 0.21, 0.12]][(sprite.leaf[0] * 997.0) as usize % 3] };
+                    brush.SetColor(&color(rgb, alpha));
+                    let face = sprite.leaf[2].abs().max(0.25);
+                    self.target.FillEllipse(&D2D1_ELLIPSE { point: p, radiusX: sprite.size * 0.45, radiusY: sprite.size * 0.22 * face }, &brush);
+                } else if sprite.petal == 7.0 {
+                    brush.SetColor(&color(tint([0.9; 3]), alpha * 0.35));
+                    self.target.FillEllipse(&D2D1_ELLIPSE { point: p, radiusX: sprite.size * 0.45, radiusY: sprite.size * 0.16 }, &brush);
+                } else if sprite.petal == 8.0 || sprite.size > 120.0 {
+                    // Icicles, the storm's cloud and the sky's flash don't fit the little window.
+                } else {
+                    brush.SetColor(&color(tint([0.97; 3]), alpha));
+                    let radius = (sprite.size * 0.5).max(0.6);
+                    self.target.FillEllipse(&D2D1_ELLIPSE { point: p, radiusX: radius, radiusY: radius }, &brush);
+                }
+            }
+            self.target.PopAxisAlignedClip();
+        }
+        self.label(&t("Live preview"), D2D_RECT_F { left: left + 12.0, top: rect.top + 8.0, right: right - 12.0, bottom: rect.top + 26.0 }, 11.0, false, [0.85, 0.88, 0.95], 0.8, LEADING)?;
+        *y += PREVIEW_HEIGHT + GAP + 10.0;
+        Ok(())
+    }
+
     /// A heading over a group of cards.
     fn section(&mut self, text: &str, left: f32, right: f32, y: &mut f32) -> Result<()> {
         *y += 10.0;
@@ -847,7 +1054,8 @@ impl Painter<'_> {
         Ok(())
     }
 
-    fn overview(&mut self, view: &View, left: f32, right: f32, y: &mut f32) -> Result<()> {
+    fn overview(&mut self, view: &View, left: f32, right: f32, y: &mut f32, typing: Option<&str>) -> Result<()> {
+        self.preview(view, left, right, y)?;
         let settings = &view.settings;
         let source = if settings.local_weather {
             Source::Outside
@@ -860,6 +1068,24 @@ impl Painter<'_> {
         let names: Vec<String> = ["Choose", "Season", "Outside"].iter().map(|name| t(name)).collect();
         let pick = |i: usize| Action::Source(sources[i]);
         let chosen = sources.iter().position(|&s| s == source);
+        // A ready-made mood in one click: a row of tiles, three to a row, each with its sign over its name.
+        self.section(&t("Moods"), left, right, y)?;
+        let columns = 3.0;
+        let width = (right - left - (columns - 1.0) * 8.0) / columns;
+        const SIGNS: [&str; 6] = ["☕", "❄", "❦", "☂", "⚡", "○"];
+        for (i, preset) in crate::prefs::PRESETS.iter().enumerate() {
+            let x = left + (i % 3) as f32 * (width + 8.0);
+            let top = *y + (i / 3) as f32 * (64.0 + 8.0);
+            let rect = D2D_RECT_F { left: x, top, right: x + width, bottom: top + 64.0 };
+            let [r, g, b, a] = self.colors.card;
+            self.fill(rect, 8.0, [r, g, b], a)?;
+            self.hit(rect, Hit::App(Action::Preset(i)), 8.0)?;
+            let ink = self.colors.ink;
+            self.glyph(SIGNS[i], D2D_RECT_F { left: rect.left + 14.0, right: rect.left + 50.0, top: rect.top, bottom: rect.bottom }, 20.0, ink)?;
+            self.label(&t(preset.name), D2D_RECT_F { left: rect.left + 54.0, right: rect.right - 8.0, top: rect.top, bottom: rect.bottom }, 13.0, false, ink, 1.0, LEADING)?;
+        }
+        *y += 2.0 * 72.0 + GAP + 6.0;
+        self.section(&t("Weather"), left, right, y)?;
         self.card(&t("What falls"), &t("Choose it yourself, follow the season where you live, or the weather outside"), Control::Choices(names, chosen, &pick), left, right, y)?;
 
         if source == Source::Chosen {
@@ -894,6 +1120,22 @@ impl Painter<'_> {
             }
         } else {
             self.note_card(&view.status.0, &view.status.1, left, right, y)?;
+            if source == Source::Outside {
+                // Where the weather is followed: where Windows says, or a place typed in.
+                match typing {
+                    Some(text) => {
+                        let shown = format!("{text}|");
+                        self.note_card(&shown, &t("Type a town and press Enter, or Escape to stop"), left, right, y)?;
+                    }
+                    None => {
+                        let place = view.place.clone().unwrap_or_else(|| t("Where Windows says this computer is"));
+                        self.card(&t("Place"), &place, Control::Button(t("Change"), Hit::Type), left, right, y)?;
+                        if view.place.is_some() {
+                            self.card(&t("Automatic Place"), &t("Follow where Windows says this computer is again"), Control::Button(t("Use"), Hit::App(Action::ClearPlace)), left, right, y)?;
+                        }
+                    }
+                }
+            }
         }
 
         let amount = if view.intensity == 0 { tr("off").to_string() } else { format!("{}%", view.intensity) };
