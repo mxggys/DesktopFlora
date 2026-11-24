@@ -560,7 +560,14 @@ impl SnowSimulation {
             let layer = &self.layers[li];
             let blend = layer.overall();
             if layer.top < 1.0 || blend.leaves < 0.4 {
-                w.hanging.remove(&id);
+                // The heap they hung from is gone: they fall with it.
+                if let Some(hanging) = w.hanging.remove(&id) {
+                    let base = layer.base();
+                    let span = layer.width();
+                    for leaf in hanging {
+                        let_go.push((V2::new(base.x + leaf.along * span, base.y - leaf.size * 0.25), leaf.seed, leaf.size, leaf.petal));
+                    }
+                }
                 continue;
             }
             let span = layer.width();
