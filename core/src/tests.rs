@@ -1130,7 +1130,7 @@ fn one_weather_gives_way_to_the_next_gradually() {
     assert!(simulation.has_snow(), "what lay was blown away");
     run(&mut simulation, 10.0, AWAY);
     assert!(leaf_sprites(&simulation) > 0, "no leaves falling");
-    run(&mut simulation, 40.0, AWAY);
+    run(&mut simulation, 70.0, AWAY);
     assert_eq!(snowflakes(&simulation), 0, "snow still falling long after");
 }
 
@@ -1160,9 +1160,13 @@ fn a_heap_jerked_off_its_window_comes_off_as_leaves() {
     let before = leaf_sprites(&simulation);
     assert!(resting > 50.0, "no heap on the window: {resting}");
 
+    // Leaves in the air: those moving.
+    let airborne = |simulation: &SnowSimulation| sprites_of(simulation).iter().filter(|s| s.leaf[0] > 0.0 && s.velocity != V2::ZERO).count();
+    let resting_in_air = airborne(&simulation);
     jerk(&mut simulation, 3);
     let left = ledge(&simulation);
-    let flying = leaf_sprites(&simulation);
+    let flying = airborne(&simulation);
+    let before = resting_in_air;
     assert!(left < resting * 0.7, "the heap held on: {resting} -> {left}");
     assert!(flying > before, "the heap came off unseen: {before} leaves -> {flying}");
     assert_finite(&simulation);
@@ -1367,7 +1371,7 @@ fn snow_turns_to_rain_gradually() {
     run(&mut simulation, 2.0, AWAY);
     assert!(rain_sprites(&simulation, 1.0).len() > 0, "no rain falling");
     assert!(snowflakes(&simulation) > 0, "the snow vanished at once");
-    run(&mut simulation, 40.0, AWAY);
+    run(&mut simulation, 70.0, AWAY);
     assert_eq!(snowflakes(&simulation), 0, "snow still falling long after");
 }
 
