@@ -140,6 +140,8 @@ pub struct Settings {
     pub calls: bool,
     /// Rain or snow due within the hour starts with a few drops or flakes.
     pub heads_up: bool,
+    /// Thunder sounds after each stroke of lightning.
+    pub thunder: bool,
     /// At most `ECO_RATE` frames a second.
     pub eco: bool,
 }
@@ -219,6 +221,7 @@ impl Settings {
             moon: read(w!("moon")).is_none_or(|v| v != 0),
             calls: read(w!("pauseInCalls")).is_none_or(|v| v != 0),
             heads_up: read(w!("headsUp")).is_none_or(|v| v != 0),
+            thunder: read(w!("thunder")).is_some_and(|v| v != 0),
             eco: read(w!("eco")).is_some_and(|v| v != 0),
         }
     }
@@ -266,6 +269,7 @@ impl Settings {
         write(w!("moon"), self.moon as u32);
         write(w!("pauseInCalls"), self.calls as u32);
         write(w!("headsUp"), self.heads_up as u32);
+        write(w!("thunder"), self.thunder as u32);
         write(w!("eco"), self.eco as u32);
     }
 

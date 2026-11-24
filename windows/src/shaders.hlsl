@@ -831,7 +831,8 @@ SpriteOut spriteShape(SpriteIn s, float2 corner) {
     o.leaf = float4(0.0, 0.0, 0.0, 0.0);
     o.smear = float4(0.0, 0.0, 0.0, 0.0);
     o.rain = float4(0.0, 0.0, 0.0, 0.0);
-    // Five marks the moon, six a drop left on the glass, seven a bank of fog and eight an icicle; a snowflake has none.
+    // Five marks the moon, six a drop left on the glass, seven a bank of fog, eight an icicle and nine a hailstone or a
+    // pellet of graupel; a snowflake has none.
     o.petal = s.petal > 1.5 ? s.petal : 0.0;
     if (s.ghost.x > 0.0) {
         o.spin = time + s.ghost.x * 40.0;
@@ -1015,6 +1016,33 @@ float4 spriteFragment(SpriteOut i) : SV_Target {
     float t = span > 0.0 ? clamp(dot(p, half_) / span, -1.0, 1.0) : 0.0;
     float2 d = p - half_ * t;
     float r = length(d) / max(i.radius, 0.001);
+    [branch] if (i.petal > 8.5) {
+        float2 c = d / max(i.radius, 0.001);
+        float rr = length(c);
+        [branch] if (i.lump < 0.5) {
+            // A hailstone: clear ice round a milky core, darker at its rim, a bright glint where the light catches it.
+            float body = 1.0 - smoothstep(0.82, 1.0, rr);
+            if (body < 0.002) discard;
+            float core = exp(-rr * rr * 3.5) * 0.55;
+            float rim = smoothstep(0.55, 1.0, rr) * 0.35;
+            float2 g = c - float2(-0.32, 0.38);
+            float glint = exp(-dot(g, g) / 0.035);
+            float a = body * saturate(0.35 + core + rim + glint * 0.6) * i.alpha;
+            float3 ice = lerp(i.tint.rgb * (0.78 - rim * 0.4), float3(1.0, 1.0, 1.0), saturate(core * 1.4 + glint)) * light.rgb;
+            ice = litBy(ice, i.env, 0.5);
+            return float4(ice * a, a);
+        }
+        // Graupel: a soft, matte, lumpy white pellet, lit from above.
+        float angle = atan2(c.y, c.x);
+        float bumpy = rr / (1.0 + 0.09 * sin(angle * 5.0 + i.alpha * 40.0) + 0.05 * sin(angle * 9.0));
+        float body = 1.0 - smoothstep(0.78, 1.0, bumpy);
+        if (body < 0.002) discard;
+        float shade = 0.78 + 0.22 * saturate(dot(c, float2(-0.45, 0.75)) * 0.8 + 0.5);
+        float3 snow = i.tint.rgb * shade * light.rgb;
+        snow = litBy(snow, i.env, 0.5);
+        float a = body * i.alpha;
+        return float4(snow * a, a);
+    }
     [branch] if (i.petal > 7.5) {
         // An icicle hanging from its top: a narrowing cone of clear ice, a bright streak down one side where it
         // catches the light, darker along the other, a drop of light at its tip.

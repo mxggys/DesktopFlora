@@ -213,6 +213,7 @@ pub fn run() -> Result<()> {
         TASKBAR_CREATED.store(RegisterWindowMessageW(w!("TaskbarCreated")), Ordering::Relaxed);
 
         let settings = Settings::load();
+        crate::thunder::set_on(settings.thunder);
         let (commands, receiver) = mpsc::channel();
         let wake = CreateEventW(None, false, false, None)?;
         let links = Links { wake: wake.0 as isize, controller: window.0 as isize };
@@ -1312,6 +1313,11 @@ fn act(action: Action) {
             }
             Action::HeadsUp => {
                 settings.heads_up = !settings.heads_up;
+                None
+            }
+            Action::Thunder => {
+                settings.thunder = !settings.thunder;
+                crate::thunder::set_on(settings.thunder);
                 None
             }
             Action::CursorTrail => {

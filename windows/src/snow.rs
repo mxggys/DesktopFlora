@@ -235,6 +235,8 @@ fn run_loop(commands: &Receiver<Command>, links: &Links, mut settings: Settings)
     let mut typing_checked = Clock::now();
     let mut trimmed_at = Clock::now();
     let mut efficient = false;
+    // Strokes of lightning so far, for the thunder after each new one.
+    let mut strikes = 0u32;
     watch_taskbar(links.wake);
 
     loop {
@@ -609,6 +611,12 @@ fn run_loop(commands: &Receiver<Command>, links: &Links, mut settings: Settings)
                 }
             }
             pass_snow(&mut screens, &tracker, now);
+            // Thunder after a new stroke of lightning, on whichever display it struck.
+            let struck = screens.iter().map(|screen| screen.simulation.strikes()).max().unwrap_or(0);
+            if struck > strikes {
+                crate::thunder::after_flash(struck);
+            }
+            strikes = struck;
             // The first display the welcome window's snow reaches starts the snowfall on all of them.
             if released {
                 settings.welcomed = true;

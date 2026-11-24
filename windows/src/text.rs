@@ -114,6 +114,8 @@ pub fn t(text: &str) -> String {
         "Behavior" => "Verhalten",
         "Overview" => "Übersicht",
         "Atmosphere" => "Atmosphäre",
+        "Thunder" => "Donner",
+        "A rumble of thunder a few seconds after each lightning stroke" => "Ein paar Sekunden nach jedem Blitz grollt der Donner",
         "Frost Flowers" => "Eisblumen",
         "Ice crystals grow in from the edges of the screen when it freezes" => "Bei Frost wachsen Eiskristalle von den Bildschirmrändern herein",
         "Misted Glass" => "Beschlagenes Glas",

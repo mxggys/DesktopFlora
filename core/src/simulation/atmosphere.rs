@@ -20,6 +20,8 @@ const MIST_REGROWTH: f32 = 45.0;
 const FROST_GROWTH: f32 = 90.0;
 const MAX_FROST: usize = 3000;
 const MAX_DROPS: usize = 400;
+/// How far apart the glints of water along a wet window edge are, in points.
+const WET_SPACING: f32 = 6.0;
 
 /// What the app asks for: how far frost and mist cover the glass, 0 to 1, and the moon's phase while it shows, from new
 /// (0) through full (0.5) and back.
@@ -114,6 +116,10 @@ pub(super) struct Weathering {
     next_stuck: f64,
     swept: Vec<Swept>,
     next_swarm: f64,
+    /// How wet the windows' top edges are, 0 to 1: they glisten while it rains and dry over a minute after.
+    wet: f32,
+    /// How many glints along the edges were drawn last, for the count of what is drawn.
+    wet_spots: usize,
 }
 
 impl Default for Weathering {
@@ -140,6 +146,8 @@ impl Default for Weathering {
             next_stuck: 2.0,
             swept: Vec::new(),
             next_swarm: 3.0,
+            wet: 0.0,
+            wet_spots: 0,
         }
     }
 }
@@ -166,6 +174,7 @@ impl Weathering {
             + self.icicles_shown()
             + self.stuck.len()
             + self.swept.len()
+            + self.wet_spots
     }
 
     /// What is drawn but only sits there, and doesn't need the screen redrawn for its sake.
@@ -343,6 +352,10 @@ impl SnowSimulation {
         let storming = self.air.asked.contains(&Mode::AutumnStorm) && !held;
         let blowing = self.air.asked.contains(&Mode::BlossomWind) && !held;
         let w = &mut self.weathering;
+
+        // The windows' top edges glisten wet while it rains, and dry over a minute once it stops.
+        w.wet = (w.wet + dt / if raining { 6.0 } else { -60.0 }).clamp(0.0, 1.0);
+        w.wet_spots = if w.wet > 0.0 { self.layers.iter().skip(1).map(|layer| (layer.width() / WET_SPACING) as usize + 1).sum() } else { 0 };
 
         // Freezing rain: icicles grow under every window's top edge over a minute and a half, and melt once it stops.
         w.ice = (w.ice + dt / if freezing { 90.0 } else { -40.0 }).clamp(0.0, 1.0);
@@ -569,7 +582,29 @@ impl SnowSimulation {
             petal: 1.0,
             ..Sprite::default()
         });
-        powder.chain(swept).chain(stuck).chain(icicles).chain(drops).chain(frost).chain(mist)
+        // Water along each window's top edge: a row of tiny glints, brighter here and there, catching the light.
+        let wet = smoothstep(0.0, 1.0, w.wet);
+        let edges = self.layers.iter().skip(1).filter(move |_| wet > 0.0).flat_map(move |layer| {
+            let base = layer.base();
+            let count = (layer.width() / WET_SPACING) as usize + 1;
+            let hidden = &layer.face_occluders;
+            (0..count).filter_map(move |k| {
+                let x = base.x + k as f32 * WET_SPACING + 2.0;
+                let sparkle = ((x * 12.9898).sin() * 43758.545).fract();
+                let covered = hidden.iter().any(|r| x >= r[0] && x <= r[2] && base.y >= r[1] && base.y <= r[3]);
+                (!covered && sparkle > 0.25).then(|| Sprite {
+                    position: V2::new(x, base.y - 0.5),
+                    velocity: V2::new(140.0, 0.0),
+                    size: 1.3 + sparkle * 1.2,
+                    alpha: wet * (0.12 + 0.35 * sparkle * sparkle) * opacity,
+                    soft: 0.5,
+                    tint_amount: 0.4,
+                    tint: [0.9, 0.95, 1.0],
+                    ..Sprite::default()
+                })
+            })
+        });
+        powder.chain(swept).chain(stuck).chain(icicles).chain(drops).chain(edges).chain(frost).chain(mist)
     }
 }
 

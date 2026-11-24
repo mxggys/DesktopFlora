@@ -51,8 +51,19 @@ struct Lightning {
     x: f32,
 }
 
+/// A splinter of ice knocked off a hailstone as it strikes.
+#[derive(Clone, Copy)]
+struct Shard {
+    position: V2,
+    velocity: V2,
+    age: f32,
+}
+
 pub(super) struct Extras {
     random: Random,
+    shards: Vec<Shard>,
+    /// How many strokes of lightning there have been, for the thunder after each.
+    strikes: u32,
     fog: Vec<Puff>,
     hail: Vec<Bit>,
     graupel: Vec<Bit>,
@@ -67,6 +78,8 @@ impl Default for Extras {
     fn default() -> Extras {
         Extras {
             random: Random::new(),
+            shards: Vec::new(),
+            strikes: 0,
             fog: Vec::new(),
             hail: Vec::new(),
             graupel: Vec::new(),
@@ -82,15 +95,24 @@ impl Extras {
     pub(super) fn sprite_count(&self) -> usize {
         self.fog.len()
             + self.hail.len()
+            + self.shards.len()
             + self.graupel.len()
             + if self.lightning.brightness > 0.01 { self.lightning.path.len() * 2 + 2 } else { 0 }
             + self.mist.len()
             + if self.gloom > 0.0 { 3 } else { 0 }
     }
 
+    pub(super) fn flash(&self) -> f32 {
+        self.lightning.brightness
+    }
+
+    pub(super) fn strikes(&self) -> u32 {
+        self.strikes
+    }
+
     /// Whether anything moves fast enough to be drawn at more than the calm rate.
     pub(super) fn lively(&self) -> bool {
-        self.lightning.brightness > 0.01
+        self.lightning.brightness > 0.01 || !self.shards.is_empty()
     }
 }
 
@@ -192,8 +214,14 @@ impl SnowSimulation {
         let layers = &self.layers;
         for (spec, bits) in [(&HAIL, &mut e.hail), (&GRAUPEL, &mut e.graupel)] {
             let target = if wants(spec.mode) { ((spec.count.0 + spec.count.1 * amount) * area).min(spec.count.2) as usize } else { 0 };
-            pelt(bits, &mut e.random, layers, &stir, spec, target, wind, width, height, dt);
+            pelt(bits, &mut e.shards, &mut e.random, layers, &stir, spec, target, wind, width, height, dt);
         }
+        for shard in e.shards.iter_mut() {
+            shard.age += dt;
+            shard.velocity.y -= 900.0 * dt;
+            shard.position += shard.velocity * dt;
+        }
+        e.shards.retain(|shard| shard.age < 0.35);
 
         // Lightning: a stroke now and then while it storms, lighting the sky, sometimes flickering once more.
         let lightning = &mut e.lightning;
@@ -210,6 +238,7 @@ impl SnowSimulation {
             let bottom = floor(lightning.x).max(height * random.range(0.25, 0.6));
             lightning.path = bolt(random, lightning.x, height, bottom);
             lightning.brightness = 1.0;
+            e.strikes += 1;
             lightning.flicker_at = (random.next() < 0.55).then(|| clock + random.range(0.08, 0.2) as f64);
             e.next_strike = clock + (random.range(3.0, 11.0) * (1.4 - amount * 0.8)) as f64;
         }
@@ -277,11 +306,24 @@ impl SnowSimulation {
                     soft: spec.soft,
                     tint_amount: spec.tint_amount,
                     tint: bit.color,
+                    // Nine marks a pellet in the shader; its look tells hail from graupel.
+                    lump: spec.look,
+                    petal: 9.0,
                     ..Sprite::default()
                 }
             }
         };
-        let hail = e.hail.iter().map(pellet(&HAIL)).chain(e.graupel.iter().map(pellet(&GRAUPEL)));
+        let shards = e.shards.iter().map(move |shard| Sprite {
+            position: shard.position,
+            velocity: shard.velocity,
+            size: 1.0,
+            alpha: 0.8 * (1.0 - shard.age / 0.35) * opacity,
+            soft: 0.3,
+            tint_amount: 0.5,
+            tint: [0.93, 0.97, 1.0],
+            ..Sprite::default()
+        });
+        let hail = e.hail.iter().map(pellet(&HAIL)).chain(e.graupel.iter().map(pellet(&GRAUPEL))).chain(shards);
         let lit = e.lightning.brightness;
         let shown = lit > 0.01;
         let sky = shown.then(|| Sprite {
@@ -382,6 +424,9 @@ struct Pellets {
     alpha: f32,
     soft: f32,
     tint_amount: f32,
+    /// How the shader draws it: as clear ice with a white core, or as soft matte snow.
+    look: f32,
+    shatters: bool,
 }
 
 /// Hard, clear ice, fast, bouncing high and melting soon.
@@ -399,6 +444,8 @@ const HAIL: Pellets = Pellets {
     alpha: 0.92,
     soft: 0.35,
     tint_amount: 0.5,
+    look: 0.25,
+    shatters: true,
 };
 
 /// Soft, white, opaque snow pellets: slower, hardly bouncing, lying a good while.
@@ -416,12 +463,15 @@ const GRAUPEL: Pellets = Pellets {
     alpha: 0.95,
     soft: 0.55,
     tint_amount: 0.8,
+    look: 0.75,
+    shatters: false,
 };
 
 /// Keeps so many pellets falling, and moves them along: falling, bouncing, rolling off windows, lying, melting.
 #[allow(clippy::too_many_arguments)]
 fn pelt(
     bits: &mut Vec<Bit>,
+    shards: &mut Vec<Shard>,
     random: &mut Random,
     layers: &[crate::layer::SnowLayer],
     stir: &dyn Fn(V2, f32) -> V2,
@@ -465,6 +515,16 @@ fn pelt(
             let surface = layers[li].surface(i);
             bit.position.y = surface + bit.size * 0.5;
             // Each bounce takes most of its speed; slow enough, it stays where it is.
+            // Hail striking hard knocks a few splinters off.
+            if spec.shatters && bit.bounces == 0 && bit.velocity.y < -400.0 && shards.len() < 600 {
+                for _ in 0..3 {
+                    shards.push(Shard {
+                        position: bit.position,
+                        velocity: V2::new(random.range(-120.0, 120.0), random.range(60.0, 200.0)),
+                        age: 0.0,
+                    });
+                }
+            }
             if bit.bounces < spec.bounces && bit.velocity.y < -spec.bounce_speed {
                 bit.velocity.y = -bit.velocity.y * random.range(spec.restitution.0, spec.restitution.1);
                 bit.velocity.x = bit.velocity.x * 0.5 + random.range(-90.0, 90.0) * spec.restitution.1;

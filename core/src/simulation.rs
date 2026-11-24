@@ -1700,6 +1700,16 @@ impl SnowSimulation {
         self.air.trail = on;
     }
 
+    /// How brightly lightning lights the sky now, 0 to 1: everything is lit up by it for a moment.
+    pub fn flash(&self) -> f32 {
+        self.extras.flash()
+    }
+
+    /// How many strokes of lightning there have been so far, for the thunder after each.
+    pub fn strikes(&self) -> u32 {
+        self.extras.strikes()
+    }
+
     pub fn breeze_direction(&self) -> f32 {
         if self.air.breeze() < 0.0 { -1.0 } else { 1.0 }
     }
@@ -1919,6 +1929,8 @@ impl SnowSimulation {
             // A third of the rain falls far off and never reaches the glass: that much more falls, so as much as
             // before runs down the windows.
             let swell = if mode.rainy() { shower * 1.4 } else { 1.0 + (shower - 1.0) * 0.4 };
+            // The far snow comes on top of what settles, so as much as before lies.
+            let swell = if mode == Mode::Snow { swell * 1.35 } else { swell };
             self.air.targets[mode.index()] = (falling * share_of(mode) * swell / count) as usize;
         }
         self.target_flakes = self.air.targets.iter().sum();
@@ -2902,9 +2914,19 @@ impl Air {
         let wind = self.wind_speed();
         let random = &mut self.random;
         let near = random.next() < 0.02;
-        let depth = if near { 1.0 } else { random.next().powf(1.6) };
-        let fall_speed = if near { random.range(75.0, 100.0) } else { 16.0 + depth * 50.0 + random.range(0.0, 10.0) };
+        // A third of the snow falls far off: tiny, faint and slow, drifting past behind the rest, never landing.
+        let far = !near && random.next() < 0.3;
+        let depth = if near { 1.0 } else if far { 0.0 } else { random.next().powf(1.6) };
+        let fall_speed = if near {
+            random.range(75.0, 100.0)
+        } else if far {
+            random.range(24.0, 34.0)
+        } else {
+            16.0 + depth * 50.0 + random.range(0.0, 10.0)
+        };
         let (tint, tint_amount) = palette_tint(&self.look.palette, random);
+        let far_size = random.range(0.9, 1.5);
+        let far_alpha = random.range(0.2, 0.32);
         let mut flake = Flake {
             position: V2::new(random.range(-30.0, width + 30.0), y),
             velocity: V2::new(wind * (0.35 + 0.65 * depth), -fall_speed),
@@ -2925,6 +2947,14 @@ impl Air {
             kind: Mode::Snow,
             water: 0.0,
         };
+        if far {
+            flake.size = self.look.size * far_size;
+            flake.alpha = far_alpha;
+            flake.soft = 0.55;
+            flake.sway_amount *= 0.4;
+            flake.velocity.x *= 0.35;
+            flake.settles = false;
+        }
         if self.wet_snow {
             // Sleet's flakes are wet clumps: bigger, heavier, falling fast and straight, gone as they land.
             flake.fall_speed *= 2.8;

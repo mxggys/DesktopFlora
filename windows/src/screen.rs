@@ -368,6 +368,9 @@ impl Screen {
         }
         // Halloween night: cold moonlight, violet shadows and a candle's glow along the drifts' edges.
         let (light, shadow_tint) = moonlit(sky.daylight, self.shadow_tint, sky.night);
+        // Lightning lights everything up for a moment: the rain, the drops on the glass, the snow lying about.
+        let flash = self.simulation.flash();
+        let light = [light[0] * (1.0 + 0.8 * flash), light[1] * (1.0 + 0.85 * flash), light[2] * (1.0 + 1.0 * flash)];
         let ambient = Ambient { light, shadow_tint, rim: [1.0, 0.56, 0.2, 0.3 * sky.night], lantern: (cursor, sky.night) };
         if let Some(image) = self.backdrop_image.take() {
             self.surface.set_backdrop(gpu, image.as_ref());

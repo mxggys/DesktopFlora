@@ -14,6 +14,7 @@ mod screen;
 mod settings;
 mod snow;
 mod text;
+mod thunder;
 mod tracker;
 mod update;
 mod welcome;
