@@ -72,6 +72,39 @@ struct Stuck {
     life: f32,
 }
 
+/// A crown of water thrown up where a raindrop strikes the ground or a window's top, gone in a fifth of a second.
+#[derive(Clone, Copy)]
+struct Crown {
+    position: V2,
+    size: f32,
+    age: f32,
+}
+
+/// A puddle along the ground: where it lies and how wide it can spread.
+#[derive(Clone, Copy)]
+struct Puddle {
+    along: f32,
+    width: f32,
+}
+
+/// A drop of meltwater: clinging under a window's edge as it swells, then falling.
+#[derive(Clone, Copy)]
+struct Drip {
+    position: V2,
+    velocity: f32,
+    age: f32,
+}
+
+/// A leaf caught on a window's top edge, hanging half over it and stirring in the wind.
+#[derive(Clone, Copy)]
+struct Hanging {
+    along: f32,
+    seed: f32,
+    size: f32,
+    phase: f32,
+    petal: bool,
+}
+
 /// A petal swept along in a gust's swarm.
 #[derive(Clone, Copy)]
 struct Swept {
@@ -118,6 +151,13 @@ pub(super) struct Weathering {
     next_swarm: f64,
     /// How wet the windows' top edges are, 0 to 1: they glisten while it rains and dry over a minute after.
     wet: f32,
+    crowns: Vec<Crown>,
+    /// How far the puddles have spread, 0 to 1, and where they lie.
+    puddling: f32,
+    puddles: Vec<Puddle>,
+    raining_hard: f32,
+    drips: Vec<Drip>,
+    hanging: HashMap<WindowId, Vec<Hanging>>,
     /// How many glints along the edges were drawn last, for the count of what is drawn.
     wet_spots: usize,
 }
@@ -148,6 +188,12 @@ impl Default for Weathering {
             next_swarm: 3.0,
             wet: 0.0,
             wet_spots: 0,
+            crowns: Vec::new(),
+            puddling: 0.0,
+            puddles: Vec::new(),
+            raining_hard: 0.0,
+            drips: Vec::new(),
+            hanging: HashMap::new(),
         }
     }
 }
@@ -175,6 +221,10 @@ impl Weathering {
             + self.stuck.len()
             + self.swept.len()
             + self.wet_spots
+            + self.crowns.len()
+            + if self.puddling > 0.0 { self.puddles.len() } else { 0 }
+            + self.drips.len()
+            + self.hanging.values().map(Vec::len).sum::<usize>()
     }
 
     /// What is drawn but only sits there, and doesn't need the screen redrawn for its sake.
@@ -187,7 +237,7 @@ impl Weathering {
     }
 
     pub(super) fn lively(&self) -> bool {
-        !self.powder.is_empty() || !self.swept.is_empty()
+        !self.powder.is_empty() || !self.swept.is_empty() || !self.crowns.is_empty() || !self.drips.is_empty()
     }
 }
 
@@ -439,6 +489,112 @@ impl SnowSimulation {
             petal.velocity.y -= 18.0 * dt;
         }
         w.swept.retain(|petal| petal.position.x > -340.0 && petal.position.x < width + 340.0 && petal.position.y > -20.0);
+
+        // Crowns of water where the rain strikes the ground or a window's top, as many as it rains hard.
+        let raining = self.air.modes.iter().any(|mode| mode.rainy()) && !held;
+        w.raining_hard += ((if raining { amount } else { 0.0 }) - w.raining_hard) * (dt / 4.0).min(1.0);
+        if raining {
+            let per_second = (30.0 + 260.0 * amount) * area;
+            let count = (per_second * dt + w.random.next()) as usize;
+            for _ in 0..count.min(12) {
+                let random = &mut w.random;
+                // Most strike the ground; some the windows' tops, by how wide they are.
+                let li = if self.layers.len() > 1 && random.next() < 0.3 { 1 + (random.next() * (self.layers.len() - 1) as f32) as usize } else { 0 };
+                let layer = &self.layers[li.min(self.layers.len() - 1)];
+                let x = layer.base().x + random.next() * layer.width();
+                if x < 0.0 || x > width {
+                    continue;
+                }
+                let surface = layer.surface(layer.clamped_index(x));
+                w.crowns.push(Crown { position: V2::new(x, surface + 1.0), size: random.range(7.0, 13.0), age: 0.0 });
+            }
+        }
+        for crown in w.crowns.iter_mut() {
+            crown.age += dt;
+        }
+        w.crowns.retain(|crown| crown.age < 0.2);
+
+        // Puddles spread along the ground in steady rain over a couple of minutes, and dry slowly once it stops.
+        w.puddling = (w.puddling + dt / if raining { 150.0 } else { -300.0 }).clamp(0.0, 1.0);
+        if w.puddling > 0.0 && w.puddles.is_empty() {
+            let random = &mut w.random;
+            let count = 3 + (width / 500.0) as usize;
+            w.puddles = (0..count).map(|_| Puddle { along: random.next(), width: random.range(90.0, 260.0) }).collect();
+        } else if w.puddling <= 0.0 {
+            w.puddles.clear();
+        }
+
+        // Thawing snow drips off the windows' top edges: a drop swells under the edge, then lets go.
+        let thawing = self.thaws && !wants(Mode::Snow) && !held;
+        if thawing && w.drips.len() < 80 {
+            for li in 1..self.layers.len() {
+                let layer = &self.layers[li];
+                if layer.top < 1.0 || layer.overall().leaves > 0.5 {
+                    continue;
+                }
+                let random = &mut w.random;
+                if random.next() < layer.width() / 900.0 * dt * 6.0 {
+                    let i = (random.next() * layer.count() as f32) as usize;
+                    if layer.heights.get(i).is_some_and(|&h| h > 0.5) {
+                        let x = layer.base().x + (i as f32 + 0.5) * super::COLUMN_WIDTH;
+                        w.drips.push(Drip { position: V2::new(x, layer.base().y - 1.0), velocity: 0.0, age: 0.0 });
+                    }
+                }
+            }
+        }
+        for drip in w.drips.iter_mut() {
+            drip.age += dt;
+            if drip.age > 0.7 {
+                drip.velocity -= 1100.0 * dt;
+                drip.position.y += drip.velocity * dt;
+            }
+        }
+        w.drips.retain(|drip| drip.position.y > -10.0 && drip.age < 4.0);
+
+        // Leaves caught on the windows' top edges, a few on each window with leaves lying on it; a gust or a swipe of
+        // the cursor sends one off.
+        let wake = self.air.cursor_wake();
+        let mut let_go: Vec<(V2, f32, f32, bool)> = Vec::new();
+        for li in 1..self.layers.len() {
+            let id = self.ids[li];
+            let layer = &self.layers[li];
+            let blend = layer.overall();
+            if layer.top < 1.0 || blend.leaves < 0.4 {
+                w.hanging.remove(&id);
+                continue;
+            }
+            let span = layer.width();
+            let base = layer.base();
+            let random = &mut w.random;
+            let petals = blend.petals;
+            let hanging = w.hanging.entry(id).or_insert_with(|| {
+                (0..(span / 170.0) as usize + 1)
+                    .map(|_| Hanging {
+                        along: random.next(),
+                        seed: random.range(0.001, 1.0),
+                        size: random.range(15.0, 24.0),
+                        phase: random.range(0.0, TAU),
+                        petal: random.next() < petals,
+                    })
+                    .collect()
+            });
+            hanging.retain_mut(|leaf| {
+                leaf.phase += dt * (1.2 + wind.abs() * 0.08);
+                let at = V2::new(base.x + leaf.along * span, base.y - leaf.size * 0.25);
+                let swept = wake.is_some_and(|(cursor, velocity)| (cursor - at).length() < 30.0 && velocity.length() > 250.0);
+                let blown = wind.abs() > 24.0 && random.next() < dt * 0.4;
+                if swept || blown {
+                    let_go.push((at, leaf.seed, leaf.size, leaf.petal));
+                    return false;
+                }
+                true
+            });
+        }
+        for (at, seed, size, _) in let_go {
+            w.stuck.push(Stuck { position: at, velocity: V2::new(wind * 2.0, 40.0), seed, turn: -1.0, size, age: 1.0, life: 1.0 });
+        }
+        let present: Vec<WindowId> = self.ids.iter().skip(1).copied().collect();
+        w.hanging.retain(|id, _| present.contains(id));
     }
 
     /// The moon, drawn behind everything that falls.
@@ -604,7 +760,74 @@ impl SnowSimulation {
                 })
             })
         });
-        powder.chain(swept).chain(stuck).chain(icicles).chain(drops).chain(edges).chain(frost).chain(mist)
+        let ground = &self.layers[0];
+        let width = self.width;
+        let puddling = smoothstep(0.0, 1.0, w.puddling);
+        let ripples = w.raining_hard;
+        let puddles = w.puddles.iter().filter(move |_| puddling > 0.0).map(move |puddle| {
+            let x = puddle.along * width;
+            let surface = ground.surface(ground.clamped_index(x.clamp(0.0, width - 1.0)));
+            let spread = puddle.width * (0.4 + 0.6 * puddling);
+            Sprite {
+                // The sheet lies along the bottom of its sprite, on the ground.
+                position: V2::new(x, surface + 1.0 + spread * 0.45),
+                size: spread,
+                alpha: 0.85 * puddling * opacity,
+                // How hard it rains, for the rings the drops make on it.
+                soft: ripples,
+                tint_amount: 1.0,
+                tint: [0.55, 0.62, 0.72],
+                lump: (puddle.along * 7.3).fract().max(0.02),
+                // Twelve marks a puddle in the shader.
+                petal: 12.0,
+                ..Sprite::default()
+            }
+        });
+        let crowns = w.crowns.iter().map(move |crown| Sprite {
+            // The crown rises from low in its sprite, where the drop struck.
+            position: crown.position + V2::new(0.0, crown.size * 0.3),
+            size: crown.size,
+            alpha: 0.6 * opacity,
+            soft: 0.0,
+            tint_amount: 1.0,
+            tint: [0.85, 0.9, 0.97],
+            // How far along it is, and eleven for a crown of water.
+            lump: (crown.age / 0.2).clamp(0.02, 1.0),
+            petal: 11.0,
+            ..Sprite::default()
+        });
+        let drips = w.drips.iter().map(move |drip| {
+            let swell = (drip.age / 0.7).min(1.0);
+            Sprite {
+                position: drip.position,
+                velocity: V2::new(0.0, drip.velocity),
+                size: 1.2 + 1.6 * swell,
+                alpha: 0.7 * opacity,
+                soft: 0.0,
+                tint_amount: 1.0,
+                tint: [0.9, 0.95, 1.0],
+                petal: 6.0,
+                ..Sprite::default()
+            }
+        });
+        let hanging = self.ids.iter().enumerate().skip(1).flat_map(move |(li, id)| {
+            let layer = &layers[li];
+            let base = layer.base();
+            let span = layer.width();
+            w.hanging.get(id).into_iter().flatten().map(move |leaf| {
+                // Tipped over the edge, nodding in the wind.
+                let nod = leaf.phase.sin() * 0.25 + (leaf.phase * 2.3 + leaf.seed * 9.0).sin() * 0.1;
+                Sprite {
+                    position: V2::new(base.x + leaf.along * span, base.y - leaf.size * 0.22),
+                    size: leaf.size,
+                    alpha: opacity,
+                    leaf: [leaf.seed, -1.25 + nod + leaf.seed, 0.75],
+                    petal: if leaf.petal { 1.0 } else { 0.0 },
+                    ..Sprite::default()
+                }
+            })
+        });
+        powder.chain(swept).chain(stuck).chain(icicles).chain(drops).chain(edges).chain(puddles).chain(crowns).chain(drips).chain(hanging).chain(frost).chain(mist)
     }
 }
 

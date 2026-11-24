@@ -793,14 +793,14 @@ impl SnowSimulation {
         self.restyled = true;
     }
 
-    /// Clears the screen first, with a gust in `direction` (or, `calm`, melting it in place), and lets the other kind
-    /// fall only after, from the top.
+    /// Lets another kind take over gradually, as `switch_modes` does.
     pub fn switch_mode(&mut self, mode: Mode, direction: f32, calm: bool) {
         self.switch_modes(&[mode], direction, calm);
     }
 
-    /// Clears the screen first and lets the other kinds fall only after, from the top. Another kind only joining what
-    /// falls already starts falling at once, with nothing to clear.
+    /// Lets the other kinds take over: what falls now goes on falling without more coming after it, and the new kinds
+    /// start falling from the top, so one weather turns into the next gradually. `direction` and `calm` are kept for
+    /// callers; nothing is blown away.
     pub fn switch_modes(&mut self, modes: &[Mode], direction: f32, calm: bool) {
         self.ask(modes);
         let modes = normalized(modes);
@@ -817,9 +817,12 @@ impl SnowSimulation {
             self.set_kinds(&modes);
             return;
         }
-        self.next_mode = Some(modes);
-        self.switched_at = self.air.clock;
-        self.blow_away(direction, calm);
+        // One weather gives way to the next as it does outside: what falls now goes on falling and isn't followed by
+        // more, the new kind starts coming down from the top, and what lies stays to melt or be covered.
+        let _ = (direction, calm);
+        self.air.modes = modes;
+        self.update_target();
+        self.restyled = true;
     }
 
     /// Nothing falls, lies, waits for its window or haunts, and nothing will until the snowfall or Halloween is
@@ -1054,6 +1057,9 @@ impl SnowSimulation {
                     ..Sprite::default()
                 };
             }
+            // A big flake in focus shows what it is: a six-armed crystal, turning slowly as it falls. Small ones and
+            // the blurred ones right in front stay soft.
+            let crystal = !flake.rain() && flake.kind == Mode::Snow && flake.size >= 6.0 && flake.soft < 0.9 && flake.settles;
             Sprite {
                 position: flake.position,
                 velocity: flake.velocity,
@@ -1063,6 +1069,8 @@ impl SnowSimulation {
                 tint_amount: flake.tint_amount,
                 tint: flake.tint,
                 rain: if flake.rain() { [1.0, 0.0] } else { [0.0; 2] },
+                lump: if crystal { (flake.phase * 0.137).fract().max(0.02) } else { 0.0 },
+                petal: if crystal { 10.0 } else { 0.0 },
                 ..Sprite::default()
             }
         });

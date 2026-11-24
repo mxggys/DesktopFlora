@@ -1016,6 +1016,86 @@ float4 spriteFragment(SpriteOut i) : SV_Target {
     float t = span > 0.0 ? clamp(dot(p, half_) / span, -1.0, 1.0) : 0.0;
     float2 d = p - half_ * t;
     float r = length(d) / max(i.radius, 0.001);
+    [branch] if (i.petal > 11.5) {
+        // A puddle: a flat sheet of water lying on the ground, seen almost edge on, mirroring the light above it, a
+        // bright line along its far edge; rings spreading on it while it rains.
+        float2 c = d / max(i.radius, 0.001);
+        float2 e = float2(c.x, (c.y + 0.9) / 0.075);
+        float shape = length(e) + 0.08 * sin(c.x * 9.0 + i.lump * 30.0);
+        float sheet = 1.0 - smoothstep(0.82, 1.0, shape);
+        if (sheet < 0.002) discard;
+        float far = smoothstep(0.0, 0.9, e.y) * (1.0 - smoothstep(0.9, 1.0, shape));
+        float rings = 0.0;
+        [unroll] for (int k = 0; k < 4; k++) {
+            float slot = floor(time * 1.7 + float(k) * 0.25 + i.lump * 5.0);
+            float age = frac(time * 1.7 + float(k) * 0.25 + i.lump * 5.0);
+            float2 at = float2(hash(float2(slot, float(k) + i.lump)) * 1.6 - 0.8, 0.0);
+            float2 off = float2((c.x - at.x) * 1.0, (e.y - at.y) * 0.075 * 1.0);
+            float ring = abs(length(off) - age * 0.18) - 0.006;
+            rings += (1.0 - smoothstep(0.0, 0.012, ring)) * (1.0 - age);
+        }
+        rings *= i.soft;
+        float3 sky = litBy(i.tint.rgb * light.rgb, i.env, 0.9);
+        float3 color = lerp(sky * 0.75, float3(0.95, 0.97, 1.0) * light.rgb, saturate(far * 0.6 + rings * 0.7));
+        float a = sheet * (0.45 + 0.35 * far + 0.3 * rings) * i.alpha;
+        return float4(color * a, a);
+    }
+    [branch] if (i.petal > 10.5) {
+        // A crown of water where a drop struck: a ring thrown up and out, a few droplets flying off its rim, gone
+        // almost at once.
+        float2 c = d / max(i.radius, 0.001);
+        float t = i.lump;
+        float2 e = float2(c.x, (c.y + 0.6) * 1.6);
+        float ring = abs(length(e) - (0.25 + 0.55 * t)) - 0.05 * (1.0 - t);
+        float crown = (1.0 - smoothstep(0.0, 0.05, ring)) * step(-0.62, c.y) * (1.0 - smoothstep(0.1, 0.5, c.y + 0.6 - 0.7 * (1.0 - t)));
+        float drops = 0.0;
+        [unroll] for (int k = 0; k < 5; k++) {
+            float side = (float(k) - 2.0) * 0.32;
+            float2 at = float2(side * (0.4 + 0.7 * t), -0.5 + 0.9 * t - 1.4 * t * t + abs(side) * 0.2);
+            float2 off = c - at;
+            drops += exp(-dot(off, off) / 0.004);
+        }
+        float a = saturate(crown + drops) * (1.0 - t) * i.alpha;
+        if (a < 0.002) discard;
+        float3 water = litBy(i.tint.rgb * light.rgb, i.env, 0.7);
+        return float4(water * a, a);
+    }
+    [branch] if (i.petal > 9.5) {
+        // A snow crystal: six arms with branches at sixty degrees off them, a little hexagonal plate at its heart,
+        // turning slowly; its fine lines softened over about a pixel, so a small one reads as a starry flake.
+        float2 c = d / max(i.radius, 0.001);
+        float rr = length(c);
+        if (rr > 1.0) discard;
+        float turn = i.spin * 0.12;
+        float angle = atan2(c.y, c.x) + turn;
+        const float sixth = 1.0471976;
+        float a6 = (frac(angle / sixth + 0.5) - 0.5) * sixth;
+        float2 q = float2(cos(a6), abs(sin(a6))) * rr;
+        float aa = 1.6 / max(i.radius * i.mood.z * scale, 1.0);
+        // The arm along the x axis, thinning toward its tip.
+        float arm = abs(q.y) - (0.075 - 0.04 * rr);
+        // Side branches leaving the arm at sixty degrees, at three places along it, shorter toward the tip.
+        float branches = 1.0;
+        [unroll] for (int k = 0; k < 3; k++) {
+            float at = 0.32 + 0.2 * float(k) + 0.05 * frac(i.lump * 7.0 + float(k) * 0.37);
+            float reach = (0.36 - 0.09 * float(k)) * (0.8 + 0.4 * frac(i.lump * 13.0));
+            float2 dir = float2(0.5, 0.8660254);
+            float2 from = q - float2(at, 0.0);
+            float along = clamp(dot(from, dir), 0.0, reach);
+            branches = min(branches, length(from - dir * along) - 0.035);
+        }
+        float plate = rr - 0.17;
+        float shape = min(min(arm, branches), plate);
+        shape = max(shape, rr - 0.97);
+        float ice = 1.0 - smoothstep(-aa, aa, shape);
+        float halo = exp(-rr * rr * 6.0) * 0.18;
+        float a = saturate(ice * 0.9 + halo) * i.alpha;
+        if (a < 0.002) discard;
+        float3 crystalColor = lerp(float3(0.97, 0.98, 1.0), i.tint.rgb, i.tint.a) * light.rgb;
+        crystalColor = litBy(crystalColor, i.env, 0.55);
+        crystalColor = lerp(crystalColor, candle, i.warm * 0.7);
+        return float4(crystalColor * a, a);
+    }
     [branch] if (i.petal > 8.5) {
         float2 c = d / max(i.radius, 0.001);
         float rr = length(c);

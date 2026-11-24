@@ -1060,7 +1060,7 @@ fn mixed_snow_and_leaves_fall_together_and_heap_up_mixed() {
 }
 
 #[test]
-fn a_kind_joining_the_fall_starts_at_once_and_one_leaving_clears_the_screen() {
+fn a_kind_joining_the_fall_starts_at_once_and_one_leaving_stops_at_once() {
     let mut simulation = SnowSimulation::new(800.0, 600.0, 0.75);
     run(&mut simulation, 30.0, AWAY);
     simulation.switch_modes(&[Mode::Snow, Mode::Autumn], 1.0, false);
@@ -1069,10 +1069,7 @@ fn a_kind_joining_the_fall_starts_at_once_and_one_leaving_clears_the_screen() {
     run(&mut simulation, 10.0, AWAY);
     assert!(leaf_sprites(&simulation) > 0, "no leaves falling");
     simulation.switch_modes(&[Mode::Autumn], 1.0, false);
-    run(&mut simulation, 0.5, AWAY);
-    assert_eq!(simulation.modes(), [Mode::Snow, Mode::Autumn], "switched before the gust cleared the screen");
-    run(&mut simulation, 8.0, AWAY);
-    assert_eq!(simulation.modes(), [Mode::Autumn], "never switched");
+    assert_eq!(simulation.modes(), [Mode::Autumn], "the kind leaving went on falling");
     assert!(simulation.leafy());
 }
 
@@ -1114,18 +1111,27 @@ fn a_closed_window_drops_only_its_own_leaves() {
     assert!(after * 10 >= before * 9, "the leaves vanished with their window: {before} -> {after}");
 }
 
+/// Flakes of snow in the air: neither leaves nor rain, nor anything big and soft such as mist.
+fn snowflakes(simulation: &SnowSimulation) -> usize {
+    let mut sprites = vec![Sprite::default(); simulation.sprite_count()];
+    let count = simulation.write_sprites(&mut sprites);
+    sprites[..count].iter().filter(|s| s.leaf[0] == 0.0 && s.rain[0] == 0.0 && (s.petal == 0.0 || s.petal == 10.0) && s.size < 30.0 && s.velocity != V2::ZERO).count()
+}
+
 #[test]
-fn switching_modes_clears_the_screen_first() {
+fn one_weather_gives_way_to_the_next_gradually() {
     let mut simulation = SnowSimulation::new(800.0, 600.0, 0.75);
     run(&mut simulation, 30.0, AWAY);
+    let snowing = snowflakes(&simulation);
     simulation.switch_mode(Mode::Autumn, 1.0, false);
-    run(&mut simulation, 0.5, AWAY);
-    assert!(!simulation.leafy(), "switched before the gust cleared the screen");
-    run(&mut simulation, 8.0, AWAY);
-    assert!(simulation.leafy(), "never switched");
+    run(&mut simulation, 1.0, AWAY);
+    // Nothing blown away: the snow already falling goes on falling while the first leaves come down.
+    assert!(snowflakes(&simulation) > snowing / 2, "the snow vanished at once");
+    assert!(simulation.has_snow(), "what lay was blown away");
     run(&mut simulation, 10.0, AWAY);
     assert!(leaf_sprites(&simulation) > 0, "no leaves falling");
-    assert_eq!(leaf_sprites(&simulation), simulation.sprite_count(), "snow left over");
+    run(&mut simulation, 40.0, AWAY);
+    assert_eq!(snowflakes(&simulation), 0, "snow still falling long after");
 }
 
 fn jerk(simulation: &mut SnowSimulation, id: isize) {
@@ -1352,22 +1358,16 @@ fn rain_spatters_the_glass_and_leaves_wet_uneven_trails() {
 }
 
 #[test]
-fn switching_to_rain_clears_the_snow_first() {
+fn snow_turns_to_rain_gradually() {
     let mut simulation = SnowSimulation::new(800.0, 600.0, 0.75);
     run(&mut simulation, 30.0, AWAY);
     simulation.switch_mode(Mode::Rain, 1.0, false);
-    run(&mut simulation, 0.5, AWAY);
-    assert_eq!(simulation.mode(), Mode::Snow, "switched before the gust cleared the screen");
-    run(&mut simulation, 8.0, AWAY);
-    assert_eq!(simulation.mode(), Mode::Rain, "never switched");
-    run(&mut simulation, 5.0, AWAY);
-    let streaks = rain_sprites(&simulation, 1.0).len();
-    assert!(streaks > 0, "no rain falling");
-    // Nothing else small is left falling: only the rain, and the faint mist it raises, big and soft.
-    let mut sprites = vec![Sprite::default(); simulation.sprite_count()];
-    let count = simulation.write_sprites(&mut sprites);
-    let flakes = sprites[..count].iter().filter(|sprite| sprite.rain[0] == 0.0 && sprite.size < 100.0).count();
-    assert_eq!(flakes, 0, "snow left over");
+    assert_eq!(simulation.mode(), Mode::Rain);
+    run(&mut simulation, 2.0, AWAY);
+    assert!(rain_sprites(&simulation, 1.0).len() > 0, "no rain falling");
+    assert!(snowflakes(&simulation) > 0, "the snow vanished at once");
+    run(&mut simulation, 40.0, AWAY);
+    assert_eq!(snowflakes(&simulation), 0, "snow still falling long after");
 }
 
 #[test]
@@ -1656,4 +1656,56 @@ fn graupel_lies_longer_than_hail() {
     };
     let (graupel, hail) = (lying(Mode::Graupel), lying(Mode::Hail));
     assert!(graupel > hail * 2, "graupel {graupel}, hail {hail}");
+}
+
+#[test]
+fn rain_throws_up_crowns_and_puddles_spread_then_dry() {
+    let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.7);
+    simulation.set_mode(Mode::Rain);
+    let mut crowns = 0;
+    for _ in 0..(160.0 / DT) as usize {
+        simulation.step(DT, AWAY);
+        crowns = crowns.max(sprites_of(&simulation).iter().filter(|s| s.petal == 11.0).count());
+    }
+    assert!(crowns > 3, "only {crowns} crowns at once");
+    let puddles: Vec<Sprite> = sprites_of(&simulation).into_iter().filter(|s| s.petal == 12.0).collect();
+    assert!(puddles.len() >= 3, "only {} puddles", puddles.len());
+    assert!(puddles.iter().all(|p| p.position.y - p.size * 0.45 < 4.0), "a puddle off the ground");
+    simulation.set_mode(Mode::Fog);
+    run(&mut simulation, 320.0, AWAY);
+    assert_eq!(sprites_of(&simulation).iter().filter(|s| s.petal == 12.0).count(), 0, "the puddles never dried");
+}
+
+#[test]
+fn snow_thawing_on_a_window_drips_and_leaves_hang_off_its_edge() {
+    let none = HashSet::new();
+    let mut simulation = SnowSimulation::new(1280.0, 800.0, 0.75);
+    simulation.thaws = true;
+    simulation.update_windows(&[surface(3, 300.0, 600.0, 500.0)], 0.2, &none, &none, false);
+    run(&mut simulation, 60.0, AWAY);
+    simulation.set_mode(Mode::Fog);
+    let mut drips = 0;
+    for _ in 0..(20.0 / DT) as usize {
+        simulation.step(DT, AWAY);
+        drips = drips.max(sprites_of(&simulation).iter().filter(|s| s.petal == 6.0 && s.position.x >= 300.0 && s.position.x <= 800.0).count());
+    }
+    assert!(drips > 0, "no meltwater dripped off the window");
+
+    let mut simulation = SnowSimulation::new(1280.0, 800.0, 0.75);
+    simulation.set_mode(Mode::Autumn);
+    simulation.update_windows(&[surface(3, 300.0, 600.0, 500.0)], 0.2, &none, &none, false);
+    run(&mut simulation, 90.0, AWAY);
+    let hanging = sprites_of(&simulation).iter().filter(|s| s.leaf[0] > 0.0 && s.velocity == V2::ZERO && (s.position.y - 597.0).abs() < 6.0 && s.leaf[2] == 0.75).count();
+    assert!(hanging > 0, "no leaf hangs off the window's edge");
+    assert_finite(&simulation);
+}
+
+#[test]
+fn big_flakes_in_focus_are_crystals() {
+    let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.8);
+    run(&mut simulation, 20.0, AWAY);
+    let sprites = sprites_of(&simulation);
+    let crystals = sprites.iter().filter(|s| s.petal == 10.0).count();
+    assert!(crystals > 0, "no crystals");
+    assert!(sprites.iter().filter(|s| s.petal == 10.0).all(|s| s.size >= 6.0 && s.soft < 0.9));
 }
