@@ -554,6 +554,8 @@ pub struct SnowSimulation {
     /// The ground first, then one ledge per window, with `ids` alongside.
     layers: Vec<SnowLayer>,
     ids: Vec<WindowId>,
+    /// Each window's frame as last told, and the frames of windows in front of any part of it.
+    frames: HashMap<WindowId, (crate::geometry::Rect, Vec<crate::geometry::Rect>)>,
     /// Snow on windows that left the screen for another desktop, kept until the window shows up again, with when it left.
     dormant: HashMap<WindowId, (SnowLayer, f64)>,
     /// Windows that went off screen without a word yet on why; a desktop switch keeps their snow, anything else drops it.
@@ -609,6 +611,7 @@ impl SnowSimulation {
             scattered_until: -10.0,
             layers: vec![ground],
             ids: vec![0],
+            frames: HashMap::new(),
             dormant: HashMap::new(),
             parking: Vec::new(),
             space_changed_at: -10.0,
@@ -1229,6 +1232,7 @@ impl SnowSimulation {
         }
         let known: HashMap<WindowId, usize> = self.ids.iter().enumerate().skip(1).map(|(li, &id)| (id, li)).collect();
         let mut seen = HashSet::new();
+        self.frames = surfaces.iter().map(|surface| (surface.id, (surface.frame, surface.cover.clone()))).collect();
         for surface in surfaces {
             let left = surface.frame.min_x() + LEDGE_INSET;
             let right = surface.frame.max_x() - LEDGE_INSET;

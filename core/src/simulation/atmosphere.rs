@@ -105,6 +105,19 @@ struct Hanging {
     petal: bool,
 }
 
+/// Frost growing in from a window's edges while it stays open in the cold.
+struct WindowFrost {
+    open: f32,
+    grown: f32,
+    size: (f32, f32),
+    rime: Vec<Rime>,
+}
+
+/// A window left open this long in freezing weather starts to frost over, and is frosted as far as it gets after this.
+const FROST_STARTS: f32 = 120.0;
+const FROST_FULL: f32 = 720.0;
+const MAX_WINDOW_FROST: usize = 1200;
+
 /// A petal swept along in a gust's swarm.
 #[derive(Clone, Copy)]
 struct Swept {
@@ -158,6 +171,9 @@ pub(super) struct Weathering {
     raining_hard: f32,
     drips: Vec<Drip>,
     hanging: HashMap<WindowId, Vec<Hanging>>,
+    /// Frost on each window left open in the cold: how long it has been open, how far its frost has grown, the size
+    /// it was laid out for, and its crystals in points from the window's bottom left.
+    window_frost: HashMap<WindowId, WindowFrost>,
     /// How many glints along the edges were drawn last, for the count of what is drawn.
     wet_spots: usize,
 }
@@ -194,6 +210,7 @@ impl Default for Weathering {
             raining_hard: 0.0,
             drips: Vec::new(),
             hanging: HashMap::new(),
+            window_frost: HashMap::new(),
         }
     }
 }
@@ -225,6 +242,7 @@ impl Weathering {
             + if self.puddling > 0.0 { self.puddles.len() } else { 0 }
             + self.drips.len()
             + self.hanging.values().map(Vec::len).sum::<usize>()
+            + self.window_frost.values().filter(|frost| frost.grown > 0.0).map(|frost| frost.rime.len()).sum::<usize>()
     }
 
     /// What is drawn but only sits there, and doesn't need the screen redrawn for its sake.
@@ -234,6 +252,8 @@ impl Weathering {
             + if self.mist_settled { self.mist_shown() } else { 0 }
             + if self.moon >= 1.0 { 2 } else { 0 }
             + if self.ice == 0.0 || self.ice >= 1.0 { self.icicles_shown() } else { 0 }
+            // A window's frost grows over minutes: between frames it is as good as still.
+            + self.window_frost.values().filter(|frost| frost.grown > 0.0).map(|frost| frost.rime.iter().filter(|rime| rime.order <= frost.grown).count()).sum::<usize>()
     }
 
     pub(super) fn lively(&self) -> bool {
@@ -602,6 +622,25 @@ impl SnowSimulation {
         }
         let present: Vec<WindowId> = self.ids.iter().skip(1).copied().collect();
         w.hanging.retain(|id, _| present.contains(id));
+
+        // In freezing weather a window left open a while frosts over from its edges in, slowly; it thaws when it
+        // warms up, and a window closed takes its frost with it.
+        let cold = w.wanted.frost.max(glazed) > 0.15 && !held;
+        for (&id, (frame, _)) in &self.frames {
+            let random = &mut w.random;
+            let frost = w.window_frost.entry(id).or_insert_with(|| WindowFrost { open: 0.0, grown: 0.0, size: (0.0, 0.0), rime: Vec::new() });
+            frost.open += dt;
+            let size = (frame.width, frame.height);
+            if cold && ((frost.size.0 - size.0).abs() > 40.0 || (frost.size.1 - size.1).abs() > 40.0 || frost.rime.is_empty()) {
+                frost.rime = grow_rime(random, size.0, size.1);
+                frost.rime.truncate(MAX_WINDOW_FROST);
+                frost.size = size;
+            }
+            let target = if cold { smoothstep(FROST_STARTS, FROST_FULL, frost.open) * w.wanted.frost.max(glazed).min(1.0) * 0.8 } else { 0.0 };
+            frost.grown = if frost.grown < target { (frost.grown + dt / FROST_GROWTH).min(target) } else { (frost.grown - dt / 30.0).max(target) };
+        }
+        let open: Vec<WindowId> = self.frames.keys().copied().collect();
+        w.window_frost.retain(|id, _| open.contains(id));
     }
 
     /// The moon, drawn behind everything that falls.
@@ -834,7 +873,29 @@ impl SnowSimulation {
                 }
             })
         });
-        powder.chain(swept).chain(stuck).chain(icicles).chain(drops).chain(edges).chain(puddles).chain(crowns).chain(drips).chain(hanging).chain(frost).chain(mist)
+        let frames = &self.frames;
+        let window_frost = w.window_frost.iter().filter(|(_, frost)| frost.grown > 0.0).flat_map(move |(id, frost)| {
+            let place = frames.get(id);
+            frost.rime.iter().filter(move |rime| rime.order <= frost.grown).filter_map(move |rime| {
+                let (frame, cover) = place?;
+                // Laid out for the size it had; it stretches with the window if that changes a little.
+                let x = frame.x + rime.position.x * frame.width / frost.size.0.max(1.0);
+                let y = frame.y + rime.position.y * frame.height / frost.size.1.max(1.0);
+                let hidden = cover.iter().any(|r| x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height);
+                let fresh = smoothstep(0.0, 0.08, frost.grown - rime.order);
+                (!hidden).then(|| Sprite {
+                    position: V2::new(x, y),
+                    velocity: rime.along * 120.0,
+                    size: rime.size * 0.85,
+                    alpha: (0.22 + 0.35 * (1.0 - rime.order)) * fresh * opacity,
+                    soft: 0.55,
+                    tint_amount: 0.35,
+                    tint: [0.82, 0.92, 1.0],
+                    ..Sprite::default()
+                })
+            })
+        });
+        powder.chain(swept).chain(stuck).chain(icicles).chain(drops).chain(edges).chain(puddles).chain(crowns).chain(drips).chain(hanging).chain(window_frost).chain(frost).chain(mist)
     }
 }
 

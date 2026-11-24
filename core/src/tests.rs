@@ -1714,3 +1714,27 @@ fn big_flakes_in_focus_are_crystals() {
     assert!(crystals > 0, "no crystals");
     assert!(sprites.iter().filter(|s| s.petal == 10.0).all(|s| s.size >= 6.0 && s.soft < 0.9));
 }
+
+#[test]
+fn a_window_left_open_in_the_cold_frosts_over_from_its_edges() {
+    use crate::simulation::Atmosphere;
+    let none = HashSet::new();
+    let mut simulation = SnowSimulation::new(1280.0, 800.0, 0.0);
+    simulation.set_mode(Mode::Fog);
+    simulation.update_windows(&[surface(3, 300.0, 600.0, 500.0)], 0.2, &none, &none, false);
+    simulation.set_atmosphere(Atmosphere { frost: 0.8, ..Atmosphere::default() });
+    let on_window = |simulation: &SnowSimulation| {
+        sprites_of(simulation).iter().filter(|s| s.position.x > 300.0 && s.position.x < 800.0 && s.position.y > 300.0 && s.position.y < 600.0 && s.petal == 0.0).count()
+    };
+    run(&mut simulation, 60.0, AWAY);
+    assert_eq!(on_window(&simulation), 0, "frost before the window had been open long");
+    for _ in 0..(400.0 / DT) as usize {
+        simulation.update_windows(&[surface(3, 300.0, 600.0, 500.0)], DT, &none, &none, false);
+        simulation.step(DT, AWAY);
+    }
+    let frosted = on_window(&simulation);
+    assert!(frosted > 100, "only {frosted} crystals on the window");
+    simulation.set_atmosphere(Atmosphere::default());
+    run(&mut simulation, 60.0, AWAY);
+    assert_eq!(on_window(&simulation), 0, "the window's frost never thawed");
+}

@@ -22,7 +22,7 @@ dependencies = [
 
 [[package]]
 name = "snowhush"
-version = "0.31.3"
+version = "0.32.0"
 dependencies = [
  "snowhush-core",
  "windows",
