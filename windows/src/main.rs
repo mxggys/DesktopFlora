@@ -18,6 +18,7 @@ mod thunder;
 mod tracker;
 mod update;
 mod welcome;
+mod widget;
 
 use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
 use windows::Win32::System::Threading::CreateMutexW;

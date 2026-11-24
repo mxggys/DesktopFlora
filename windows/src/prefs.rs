@@ -75,7 +75,7 @@ pub const PRESETS: [Preset; 6] = [
     Preset { name: "Winter Wonderland", mode: Mode::Snow, intensity: 75, opacity: 100, size: 2, wind: 1, frost: true, misted: false, thunder: false },
     Preset { name: "Autumn Day", mode: Mode::Autumn, intensity: 45, opacity: 100, size: 1, wind: 1, frost: false, misted: false, thunder: false },
     Preset { name: "Rainy Day", mode: Mode::Rain, intensity: 55, opacity: 90, size: 1, wind: 1, frost: false, misted: true, thunder: false },
-    Preset { name: "Thunderstorm", mode: Mode::Storm, intensity: 80, opacity: 100, size: 1, wind: 2, frost: false, misted: true, thunder: true },
+    Preset { name: "Stormy Night", mode: Mode::Storm, intensity: 80, opacity: 100, size: 1, wind: 2, frost: false, misted: true, thunder: true },
     Preset { name: "Minimal", mode: Mode::Snow, intensity: 15, opacity: 55, size: 0, wind: 0, frost: false, misted: false, thunder: false },
 ];
 
@@ -183,6 +183,8 @@ pub struct Settings {
     pub heads_up: bool,
     /// Thunder sounds after each stroke of lightning.
     pub thunder: bool,
+    /// The weather widget shows on the desktop.
+    pub widget: bool,
     /// At most `ECO_RATE` frames a second.
     pub eco: bool,
 }
@@ -263,6 +265,7 @@ impl Settings {
             calls: read(w!("pauseInCalls")).is_none_or(|v| v != 0),
             heads_up: read(w!("headsUp")).is_none_or(|v| v != 0),
             thunder: read(w!("thunder")).is_some_and(|v| v != 0),
+            widget: read(w!("widget")).is_some_and(|v| v != 0),
             eco: read(w!("eco")).is_some_and(|v| v != 0),
         }
     }
@@ -311,6 +314,7 @@ impl Settings {
         write(w!("pauseInCalls"), self.calls as u32);
         write(w!("headsUp"), self.heads_up as u32);
         write(w!("thunder"), self.thunder as u32);
+        write(w!("widget"), self.widget as u32);
         write(w!("eco"), self.eco as u32);
     }
 
@@ -478,6 +482,18 @@ pub fn place() -> Option<(String, f64, f64)> {
     let longitude = parts.next()?.parse().ok()?;
     let latitude = parts.next()?.parse().ok()?;
     Some((parts.next()?.to_string(), latitude, longitude))
+}
+
+/// Where the weather widget was put last, in screen pixels.
+pub fn widget_position() -> Option<(i32, i32)> {
+    Some((read(w!("widgetX"))? as i32, read(w!("widgetY"))? as i32))
+}
+
+pub fn set_widget_position(position: Option<(i32, i32)>) {
+    if let Some((x, y)) = position {
+        write(w!("widgetX"), x as u32);
+        write(w!("widgetY"), y as u32);
+    }
 }
 
 pub fn set_place(place: Option<(&str, f64, f64)>) {

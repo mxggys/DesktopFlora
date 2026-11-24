@@ -29,6 +29,32 @@ pub struct Conditions {
     pub humidity: f32,
     /// Rain or snow on its way while it is dry, and in about how many minutes: within the hour, by the quarter.
     pub coming: Option<(Mode, u32)>,
+    /// The weather's WMO code now, for naming it.
+    pub code: u32,
+    /// The hours ahead: the hour of the day, the temperature and the WMO code, `hour_count` of them.
+    pub hours: [(u8, f32, u8); 6],
+    pub hour_count: u8,
+}
+
+/// What the sky is doing, by its WMO code, in words.
+pub fn describe(code: u32) -> &'static str {
+    match code {
+        0 => "Clear",
+        1 => "Mostly clear",
+        2 => "Partly cloudy",
+        3 => "Overcast",
+        45 | 48 => "Fog",
+        51 | 53 | 55 => "Drizzle",
+        56 | 57 | 66 | 67 => "Freezing rain",
+        61 | 63 | 65 => "Rain",
+        71 | 73 | 75 => "Snow",
+        77 => "Graupel",
+        80..=82 => "Showers",
+        85 | 86 => "Snow showers",
+        95 => "Thunderstorm",
+        96 | 99 => "Thunderstorm with hail",
+        _ => "Cloudy",
+    }
 }
 
 impl Conditions {
@@ -118,7 +144,7 @@ pub fn moon_phase(unix_seconds: f64) -> f32 {
 /// The path of the forecast request for a place, rounded to about a kilometre so the request doesn't pinpoint anyone.
 pub fn forecast_path(latitude: f64, longitude: f64) -> String {
     format!(
-        "/v1/forecast?latitude={latitude:.2}&longitude={longitude:.2}&current=weather_code,precipitation,rain,showers,snowfall,cloud_cover,is_day,temperature_2m,relative_humidity_2m,wind_speed_10m,wind_gusts_10m&minutely_15=precipitation,snowfall&forecast_minutely_15=5&wind_speed_unit=kmh"
+        "/v1/forecast?latitude={latitude:.2}&longitude={longitude:.2}&current=weather_code,precipitation,rain,showers,snowfall,cloud_cover,is_day,temperature_2m,relative_humidity_2m,wind_speed_10m,wind_gusts_10m&minutely_15=precipitation,snowfall&forecast_minutely_15=5&hourly=temperature_2m,weather_code&forecast_hours=7&wind_speed_unit=kmh"
     )
 }
 
@@ -181,7 +207,41 @@ pub fn conditions(json: &str) -> Option<Conditions> {
         temperature,
         humidity: number(current, "relative_humidity_2m").unwrap_or(70.0) as f32,
         coming: coming(json, temperature),
+        code,
+        hours: [(0, 0.0, 0); 6],
+        hour_count: 0,
     })
+    .map(|mut sky| {
+        let (hours, count) = hours_ahead(json);
+        sky.hours = hours;
+        sky.hour_count = count;
+        sky
+    })
+}
+
+/// The next hours from the forecast's hourly block: the first is the hour under way now, so it is skipped.
+fn hours_ahead(json: &str) -> ([(u8, f32, u8); 6], u8) {
+    let mut hours = [(0u8, 0.0f32, 0u8); 6];
+    let Some(start) = json.find("\"hourly\":") else { return (hours, 0) };
+    let block = &json[start..];
+    let temperatures = series(block, "temperature_2m").unwrap_or_default();
+    let codes = series(block, "weather_code").unwrap_or_default();
+    // The times, as "2026-11-24T08:00": the hour is what follows the T.
+    let times: Vec<u8> = block
+        .find("\"time\":[")
+        .map(|at| &block[at + 8..])
+        .and_then(|rest| rest.find(']').map(|end| &rest[..end]))
+        .map(|list| list.split(',').filter_map(|time| time.split('T').nth(1).and_then(|clock| clock.get(..2)).and_then(|hour| hour.parse().ok())).collect())
+        .unwrap_or_default();
+    let mut count = 0;
+    for i in 1..temperatures.len().min(codes.len()).min(times.len()) {
+        if count >= hours.len() {
+            break;
+        }
+        hours[count] = (times[i], temperatures[i] as f32, codes[i] as u8);
+        count += 1;
+    }
+    (hours, count as u8)
 }
 
 /// The first quarter of the coming hour with rain or snow in the forecast, and which, if any.
@@ -296,6 +356,18 @@ mod tests {
         assert_eq!(outside(10, 52.5, &soon), (8, vec![Mode::Autumn, Mode::Rain]));
         // What falls already is told by the current weather, not by the forecast.
         assert_eq!(forecast("0.5,0,0,0,0").coming, None);
+    }
+
+    #[test]
+    fn reads_the_hours_ahead() {
+        let answer = ANSWER.to_string()
+            + r#","hourly_units":{"time":"iso8601"},"hourly":{"time":["2026-01-10T12:00","2026-01-10T13:00","2026-01-10T14:00"],"temperature_2m":[-2.0,-1.5,0.5],"weather_code":[73,71,3]}}"#;
+        let sky = conditions(&answer).unwrap();
+        assert_eq!(sky.code, 73);
+        assert_eq!(sky.hour_count, 2);
+        assert_eq!(sky.hours[0], (13, -1.5, 71));
+        assert_eq!(sky.hours[1], (14, 0.5, 3));
+        assert_eq!(describe(sky.code), "Snow");
     }
 
     #[test]

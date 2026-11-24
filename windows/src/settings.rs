@@ -117,6 +117,7 @@ pub enum Action {
     HeadsUp,
     Thunder,
     Preset(usize),
+    Widget,
     /// Look this place up and follow its weather.
     SetPlace(String),
     /// Follow where Windows says the computer is again.
@@ -1243,6 +1244,7 @@ impl Painter<'_> {
         self.card(&t("Rain Heads-Up"), &t("When rain or snow is due within the hour, a few drops or flakes come first"), Control::Switch(settings.heads_up, Action::HeadsUp), left, right, y)?;
 
         self.section(tr("general"), left, right, y)?;
+        self.card(&t("Weather Widget"), &t("A small glass card on the desktop with the temperature and the next hours; drag it anywhere"), Control::Switch(settings.widget, Action::Widget), left, right, y)?;
         self.card(&t("Pause in Calls"), &t("Hides while the microphone or camera is in use, as in Teams, Zoom or Discord"), Control::Switch(settings.calls, Action::PauseInCalls), left, right, y)?;
         self.card(tr("login"), &t("Starts with Windows"), Control::Switch(view.login, Action::OpenAtLogin), left, right, y)?;
         self.card(&t("Cursor Trail"), &t("Moving the mouse fast ploughs through the snow and whirls up leaves, sand and confetti"), Control::Switch(settings.cursor_trail, Action::CursorTrail), left, right, y)?;

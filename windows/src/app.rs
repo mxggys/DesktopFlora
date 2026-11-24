@@ -27,6 +27,7 @@ use windows::core::{PCWSTR, Result, w};
 use crate::halloween;
 use crate::log;
 use crate::outside;
+use crate::widget;
 use crate::menu::{self, Entry, Icon, Tile};
 use crate::settings::{self, Action, COLOR_PRESETS, Source, View};
 use crate::prefs::{self, Hotkey, MAX_COLORS, SCHEDULES, SHORTCUTS, SIZES, Settings, WINDS};
@@ -189,6 +190,8 @@ struct App {
     taken: [bool; 3],
     /// The microphone or camera is in use, as in a call.
     in_call: bool,
+    /// The weather outside last asked for, whether it is followed or only shown in the widget.
+    sky: Option<Conditions>,
 }
 
 thread_local! {
@@ -263,6 +266,7 @@ pub fn run() -> Result<()> {
             sent: None,
             taken: [false; 3],
             in_call: false,
+            sky: None,
         };
         send(&app, Command::Excluded(excluded));
         APP.set(Some(app));
@@ -273,7 +277,7 @@ pub fn run() -> Result<()> {
         if let Some(before) = prefs::take_new_version(env!("CARGO_PKG_VERSION")) {
             notify(window, &fill_in(&t("DesktopFlora is now {}"), &[env!("CARGO_PKG_VERSION")]), &fill_in(&t("Updated from {}."), &[&before]));
         }
-        if settings.local_weather {
+        if settings.local_weather || settings.widget {
             check_weather(window, false);
             SetTimer(Some(window), TIMER_WEATHER, WEATHER_INTERVAL, None);
         }
@@ -1051,7 +1055,7 @@ fn choose(window: HWND, chosen: u32) {
     }
     // What falls, how much, how it looks and whether it shows go through here, which sends only what changed.
     apply();
-    if !APP.with_borrow(|app| app.as_ref().is_some_and(|app| app.settings.local_weather)) {
+    if !APP.with_borrow(|app| app.as_ref().is_some_and(|app| app.settings.local_weather || app.settings.widget)) {
         unsafe {
             let _ = KillTimer(Some(window), TIMER_WEATHER);
         }
@@ -1131,6 +1135,22 @@ fn act(action: Action) {
                     let _ = PostMessageW(Some(HWND(target as _)), WM_PLACE, WPARAM(0), LPARAM(Box::into_raw(result) as isize));
                 }
             });
+            return;
+        }
+        Action::Widget => {
+            let on = APP.with_borrow_mut(|app| {
+                let settings = &mut app.as_mut()?.settings;
+                settings.widget = !settings.widget;
+                settings.save();
+                Some(settings.widget)
+            });
+            if on == Some(true) {
+                check_weather(window, false);
+                unsafe {
+                    SetTimer(Some(window), TIMER_WEATHER, WEATHER_INTERVAL, None);
+                }
+            }
+            refresh_widget();
             return;
         }
         Action::ClearPlace => {
@@ -1383,7 +1403,7 @@ fn act(action: Action) {
     }
     // What falls, how much, how it looks and whether it shows go through here, which sends only what changed.
     apply();
-    if !APP.with_borrow(|app| app.as_ref().is_some_and(|app| app.settings.local_weather)) {
+    if !APP.with_borrow(|app| app.as_ref().is_some_and(|app| app.settings.local_weather || app.settings.widget)) {
         unsafe {
             let _ = KillTimer(Some(window), TIMER_WEATHER);
         }
@@ -1430,11 +1450,40 @@ fn set_local_weather(window: HWND, on: bool) {
         }
     });
     apply();
+    let widget = APP.with_borrow(|app| app.as_ref().is_some_and(|app| app.settings.widget));
     unsafe {
-        if on {
+        if on || widget {
             SetTimer(Some(window), TIMER_WEATHER, WEATHER_INTERVAL, None);
         } else {
             let _ = KillTimer(Some(window), TIMER_WEATHER);
+        }
+    }
+}
+
+/// Shows the weather widget with the latest weather, or takes it away when it is switched off.
+fn refresh_widget() {
+    let report = APP.with_borrow(|app| {
+        let app = app.as_ref()?;
+        if !app.settings.widget {
+            return None;
+        }
+        let sky = app.sky?;
+        let place = prefs::place().map(|(name, _, _)| name.split(',').next().unwrap_or(&name).to_string()).unwrap_or_else(|| t("Your location"));
+        Some(widget::Report {
+            temperature: sky.temperature,
+            code: sky.code,
+            day: sky.day,
+            condition: t(snowhush_core::weather::describe(sky.code)),
+            place,
+            hours: sky.hours[..sky.hour_count as usize].to_vec(),
+        })
+    });
+    match report {
+        Some(report) => widget::show(report),
+        None => {
+            if !APP.with_borrow(|app| app.as_ref().is_some_and(|app| app.settings.widget)) {
+                widget::hide();
+            }
         }
     }
 }
@@ -1459,12 +1508,14 @@ fn weather_arrived(window: HWND, result: std::result::Result<(Conditions, f64), 
         Ok(outside) => {
             APP.with_borrow_mut(|app| {
                 let Some(app) = app else { return };
+                app.sky = Some(outside.0);
                 if app.settings.local_weather {
                     log!("outside: {outside:?}");
                     app.outside = Some(outside);
                 }
             });
             apply();
+            refresh_widget();
         }
         Err(error) => {
             log!("weather failed: {error}");
