@@ -511,8 +511,8 @@ impl Screen {
         log!("backdrop of {}: {backdrop:?}, shadow {:?}", self.monitor.name, self.shadow_tint);
         // The picture itself, small, for the light each flake and drop picks up and what drops on the glass show.
         let bounds = &self.monitor.bounds;
-        let aspect = (bounds.right - bounds.left) as f32 / (bounds.bottom - bounds.top).max(1) as f32;
-        let image = backdrop.as_ref().and_then(|backdrop| wallpapers.image(backdrop, aspect));
+        let display = ((bounds.right - bounds.left).max(1) as u32, (bounds.bottom - bounds.top).max(1) as u32);
+        let image = backdrop.as_ref().and_then(|backdrop| wallpapers.image(backdrop, display));
         self.backdrop_image = Some(image);
         self.backdrop = backdrop;
     }
