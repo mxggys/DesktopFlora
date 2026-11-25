@@ -94,7 +94,7 @@ thread_local! {
     static LOOK: std::cell::RefCell<Look> = std::cell::RefCell::new(Look::default());
     /// Frost, mist and the moon, for new displays' snow too.
     static ATMOSPHERE: std::cell::Cell<snowhush_core::simulation::Atmosphere> =
-        const { std::cell::Cell::new(snowhush_core::simulation::Atmosphere { frost: 0.0, mist: 0.0, moon: None }) };
+        const { std::cell::Cell::new(snowhush_core::simulation::Atmosphere { frost: 0.0, mist: 0.0, moon: None, warmth: 0.0 }) };
 }
 
 /// Opacity what falls fades to while someone types.

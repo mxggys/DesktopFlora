@@ -1016,6 +1016,23 @@ float4 spriteFragment(SpriteOut i) : SV_Target {
     float t = span > 0.0 ? clamp(dot(p, half_) / span, -1.0, 1.0) : 0.0;
     float2 d = p - half_ * t;
     float r = length(d) / max(i.radius, 0.001);
+    [branch] if (i.petal > 12.5) {
+        // A warm glow over the whole screen, as on an autumn evening indoors: brown-red, deeper toward the edges and
+        // corners, a little amber low on the left where the light seems to come from. Faint in the middle, so what
+        // is on the screen stays easy to read.
+        float2 c = d / max(i.radius, 0.001);
+        float2 e = c / max(float2(i.lump, i.soft), 0.001);
+        float edge = length(e * float2(0.9, 1.0));
+        float vignette = smoothstep(0.45, 1.45, edge);
+        float2 g = e - float2(-0.45, -1.0);
+        float glow = exp(-dot(g, g) * 1.1);
+        float3 deep = float3(0.13, 0.04, 0.02);
+        float3 amber = float3(0.8, 0.36, 0.1);
+        float3 color = lerp(i.tint.rgb, deep, vignette);
+        color = lerp(color, amber, glow * 0.45 * (1.0 - vignette));
+        float a = saturate(0.1 + 0.5 * vignette + 0.06 * glow) * i.alpha;
+        return float4(color * a, a);
+    }
     [branch] if (i.petal > 11.5) {
         // A puddle: a flat sheet of water lying on the ground, seen almost edge on, mirroring the light above it, a
         // bright line along its far edge; rings spreading on it while it rains.

@@ -486,6 +486,7 @@ fn atmosphere(app: &App, falling: &[Mode], hour: u32) -> Atmosphere {
         frost: if settings.frost { frost } else { 0.0 },
         mist: if settings.misted { mist } else { 0.0 },
         moon: (settings.moon && night && clear).then(|| moon_phase(now)),
+        warmth: if settings.cozy { 1.0 } else { 0.0 },
     }
 }
 
@@ -1367,6 +1368,10 @@ fn act(action: Action) {
             }
             Action::Moon => {
                 settings.moon = !settings.moon;
+                None
+            }
+            Action::Cozy => {
+                settings.cozy = !settings.cozy;
                 None
             }
             Action::PauseInCalls => {

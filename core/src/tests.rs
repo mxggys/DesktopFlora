@@ -1580,6 +1580,21 @@ fn the_moon_shows_in_its_phase() {
 }
 
 #[test]
+fn the_cozy_glow_covers_the_screen_and_rests() {
+    use crate::simulation::Atmosphere;
+    let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.0);
+    simulation.set_atmosphere(Atmosphere { warmth: 1.0, ..Atmosphere::default() });
+    run(&mut simulation, 8.0, AWAY);
+    let glow: Vec<Sprite> = sprites_of(&simulation).into_iter().filter(|s| s.petal == 13.0).collect();
+    assert_eq!(glow.len(), 1);
+    assert!(glow[0].size >= 1200.0 && (glow[0].alpha - 1.0).abs() < 1e-4);
+    assert!(!simulation.step(DT, AWAY), "the glow keeps the screen redrawing");
+    simulation.set_atmosphere(Atmosphere::default());
+    run(&mut simulation, 5.0, AWAY);
+    assert!(sprites_of(&simulation).iter().all(|s| s.petal != 13.0), "the glow stays after it is switched off");
+}
+
+#[test]
 fn spindrift_streams_along_the_drifts_in_a_gale() {
     use crate::simulation::{Look, Mode};
     let mut simulation = SnowSimulation::new(1200.0, 800.0, 0.8);

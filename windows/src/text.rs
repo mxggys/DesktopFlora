@@ -144,6 +144,8 @@ pub fn t(text: &str) -> String {
         "Live preview" => "Live-Vorschau",
         "A ready-made look in one click" => "Ein fertiger Look mit einem Klick",
         "Cozy" => "Gemütlich",
+        "Cozy Glow" => "Gemütliches Licht",
+        "A warm, brown-red glow over the screen, darker toward the edges" => "Ein warmes, braun-rötliches Licht über dem Bildschirm, zu den Rändern hin dunkler",
         "Winter Wonderland" => "Winterwunderland",
         "Autumn Day" => "Herbsttag",
         "Rainy Day" => "Regentag",

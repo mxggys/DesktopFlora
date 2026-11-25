@@ -68,15 +68,16 @@ pub struct Preset {
     pub frost: bool,
     pub misted: bool,
     pub thunder: bool,
+    pub cozy: bool,
 }
 
 pub const PRESETS: [Preset; 6] = [
-    Preset { name: "Cozy", mode: Mode::Snow, intensity: 35, opacity: 80, size: 1, wind: 0, frost: false, misted: false, thunder: false },
-    Preset { name: "Winter Wonderland", mode: Mode::Snow, intensity: 75, opacity: 100, size: 2, wind: 1, frost: true, misted: false, thunder: false },
-    Preset { name: "Autumn Day", mode: Mode::Autumn, intensity: 45, opacity: 100, size: 1, wind: 1, frost: false, misted: false, thunder: false },
-    Preset { name: "Rainy Day", mode: Mode::Rain, intensity: 55, opacity: 90, size: 1, wind: 1, frost: false, misted: true, thunder: false },
-    Preset { name: "Stormy Night", mode: Mode::Storm, intensity: 80, opacity: 100, size: 1, wind: 2, frost: false, misted: true, thunder: true },
-    Preset { name: "Minimal", mode: Mode::Snow, intensity: 15, opacity: 55, size: 0, wind: 0, frost: false, misted: false, thunder: false },
+    Preset { name: "Cozy", mode: Mode::Autumn, intensity: 40, opacity: 95, size: 1, wind: 0, frost: false, misted: false, thunder: false, cozy: true },
+    Preset { name: "Winter Wonderland", mode: Mode::Snow, intensity: 75, opacity: 100, size: 2, wind: 1, frost: true, misted: false, thunder: false, cozy: false },
+    Preset { name: "Autumn Day", mode: Mode::Autumn, intensity: 45, opacity: 100, size: 1, wind: 1, frost: false, misted: false, thunder: false, cozy: false },
+    Preset { name: "Rainy Day", mode: Mode::Rain, intensity: 55, opacity: 90, size: 1, wind: 1, frost: false, misted: true, thunder: false, cozy: false },
+    Preset { name: "Stormy Night", mode: Mode::Storm, intensity: 80, opacity: 100, size: 1, wind: 2, frost: false, misted: true, thunder: true, cozy: false },
+    Preset { name: "Minimal", mode: Mode::Snow, intensity: 15, opacity: 55, size: 0, wind: 0, frost: false, misted: false, thunder: false, cozy: false },
 ];
 
 impl Settings {
@@ -94,6 +95,8 @@ impl Settings {
         self.frost |= preset.frost;
         self.misted |= preset.misted;
         self.thunder |= preset.thunder;
+        // The warm glow belongs to its mood alone: another one takes it away.
+        self.cozy = preset.cozy;
     }
 }
 
@@ -177,6 +180,8 @@ pub struct Settings {
     pub misted: bool,
     /// The moon shows at night, in its phase.
     pub moon: bool,
+    /// A warm, brown-red glow over the screen, darker toward its edges, as on an autumn evening indoors.
+    pub cozy: bool,
     /// Hides while the microphone or camera is in use, as in a call.
     pub calls: bool,
     /// Rain or snow due within the hour starts with a few drops or flakes.
@@ -262,6 +267,7 @@ impl Settings {
             frost: read(w!("frost")).is_none_or(|v| v != 0),
             misted: read(w!("misted")).is_none_or(|v| v != 0),
             moon: read(w!("moon")).is_none_or(|v| v != 0),
+            cozy: read(w!("cozy")).is_some_and(|v| v != 0),
             calls: read(w!("pauseInCalls")).is_none_or(|v| v != 0),
             heads_up: read(w!("headsUp")).is_none_or(|v| v != 0),
             thunder: read(w!("thunder")).is_some_and(|v| v != 0),
@@ -311,6 +317,7 @@ impl Settings {
         write(w!("frost"), self.frost as u32);
         write(w!("misted"), self.misted as u32);
         write(w!("moon"), self.moon as u32);
+        write(w!("cozy"), self.cozy as u32);
         write(w!("pauseInCalls"), self.calls as u32);
         write(w!("headsUp"), self.heads_up as u32);
         write(w!("thunder"), self.thunder as u32);

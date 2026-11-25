@@ -30,6 +30,8 @@ pub struct Atmosphere {
     pub frost: f32,
     pub mist: f32,
     pub moon: Option<f32>,
+    /// How much of a warm, brown-red glow lies over the screen, from nought to one.
+    pub warmth: f32,
 }
 
 /// A point along a frost crystal, and how far along its growth it appears.
@@ -151,6 +153,8 @@ pub(super) struct Weathering {
     mist_settled: bool,
     moon: f32,
     phase: f32,
+    /// How far the warm glow has come in.
+    warmth: f32,
     droplets: Vec<Droplet>,
     was_raining: f32,
     powder: Vec<Powder>,
@@ -191,6 +195,7 @@ impl Default for Weathering {
             mist_columns: 0,
             mist_settled: true,
             moon: 0.0,
+            warmth: 0.0,
             phase: 0.0,
             droplets: Vec::new(),
             was_raining: 0.0,
@@ -232,6 +237,7 @@ impl Weathering {
         self.frost_shown()
             + self.mist_shown()
             + if self.moon > 0.0 { 2 } else { 0 }
+            + if self.warmth > 0.0 { 1 } else { 0 }
             + self.droplets.len()
             + self.powder.len()
             + self.icicles_shown()
@@ -251,6 +257,7 @@ impl Weathering {
         (if frost_still { self.frost_shown() } else { 0 })
             + if self.mist_settled { self.mist_shown() } else { 0 }
             + if self.moon >= 1.0 { 2 } else { 0 }
+            + if self.warmth == self.wanted.warmth.clamp(0.0, 1.0) && self.warmth > 0.0 { 1 } else { 0 }
             + if self.ice == 0.0 || self.ice >= 1.0 { self.icicles_shown() } else { 0 }
             // A window's frost grows over minutes: between frames it is as good as still.
             + self.window_frost.values().filter(|frost| frost.grown > 0.0).map(|frost| frost.rime.iter().filter(|rime| rime.order <= frost.grown).count()).sum::<usize>()
@@ -358,6 +365,9 @@ impl SnowSimulation {
             w.phase = phase.rem_euclid(1.0);
         }
         w.moon = (w.moon + dt / if w.wanted.moon.is_some() { 5.0 } else { -3.0 }).clamp(0.0, 1.0);
+        // The warm glow comes up slowly, as lamps are lit, and goes a little quicker.
+        let warmth = w.wanted.warmth.clamp(0.0, 1.0);
+        w.warmth = if w.warmth < warmth { (w.warmth + dt / 4.0).min(warmth) } else { (w.warmth - dt / 2.5).max(warmth) };
 
         // Drops left on the glass once the rain stops, drying from the edges in, the small ones first.
         if raining {
@@ -671,7 +681,21 @@ impl SnowSimulation {
             petal: 5.0,
             ..Sprite::default()
         });
-        halo.into_iter().chain(disc)
+        // The warm glow over the whole screen, behind everything; the shader draws it out to the screen's corners.
+        let side = self.width.max(self.height);
+        let glow = (w.warmth > 0.0).then(|| Sprite {
+            position: V2::new(self.width * 0.5, self.height * 0.5),
+            size: side,
+            alpha: smoothstep(0.0, 1.0, w.warmth),
+            tint_amount: 1.0,
+            tint: [0.42, 0.16, 0.06],
+            // How far the screen reaches across and up the sprite, for the shader to find its edges.
+            lump: self.width / side,
+            soft: self.height / side,
+            petal: 13.0,
+            ..Sprite::default()
+        });
+        glow.into_iter().chain(halo).chain(disc)
     }
 
     /// Spindrift, then what is on the glass, in front of everything: drops, frost, and mist over it all.

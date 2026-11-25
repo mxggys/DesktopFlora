@@ -113,6 +113,7 @@ pub enum Action {
     Frost,
     Misted,
     Moon,
+    Cozy,
     PauseInCalls,
     HeadsUp,
     Thunder,
@@ -1240,6 +1241,7 @@ impl Painter<'_> {
         self.card(&t("Frost Flowers"), &t("Ice crystals grow in from the edges of the screen when it freezes"), Control::Switch(settings.frost, Action::Frost), left, right, y)?;
         self.card(&t("Misted Glass"), &t("The screen mists over in cold, damp weather. A quick swipe of the mouse wipes it clear"), Control::Switch(settings.misted, Action::Misted), left, right, y)?;
         self.card(&t("Moon"), &t("The moon shows at night, in its real phase"), Control::Switch(settings.moon, Action::Moon), left, right, y)?;
+        self.card(&t("Cozy Glow"), &t("A warm, brown-red glow over the screen, darker toward the edges"), Control::Switch(settings.cozy, Action::Cozy), left, right, y)?;
         self.card(&t("Thunder"), &t("A rumble of thunder a few seconds after each lightning stroke"), Control::Switch(settings.thunder, Action::Thunder), left, right, y)?;
         self.card(&t("Rain Heads-Up"), &t("When rain or snow is due within the hour, a few drops or flakes come first"), Control::Switch(settings.heads_up, Action::HeadsUp), left, right, y)?;
 
