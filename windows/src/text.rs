@@ -154,8 +154,6 @@ pub fn t(text: &str) -> String {
         "Minimal" => "Minimal",
         "Thunder" => "Donner",
         "A rumble of thunder a few seconds after each lightning stroke" => "Ein paar Sekunden nach jedem Blitz grollt der Donner",
-        "Frost Flowers" => "Eisblumen",
-        "Ice crystals grow in from the edges of the screen when it freezes" => "Bei Frost wachsen Eiskristalle von den Bildschirmrändern herein",
         "Misted Glass" => "Beschlagenes Glas",
         "The screen mists over in cold, damp weather. A quick swipe of the mouse wipes it clear" => "Bei kaltem, feuchtem Wetter beschlägt der Bildschirm. Schnell mit der Maus drüberwischen macht ihn frei",
         "Moon" => "Mond",

@@ -1030,7 +1030,7 @@ float4 spriteFragment(SpriteOut i) : SV_Target {
         float3 amber = float3(0.8, 0.36, 0.1);
         float3 color = lerp(i.tint.rgb, deep, vignette);
         color = lerp(color, amber, glow * 0.45 * (1.0 - vignette));
-        float a = saturate(0.1 + 0.5 * vignette + 0.06 * glow) * i.alpha;
+        float a = saturate(0.05 + 0.25 * vignette + 0.03 * glow) * i.alpha;
         return float4(color * a, a);
     }
     [branch] if (i.petal > 11.5) {

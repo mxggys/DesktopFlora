@@ -293,8 +293,8 @@ impl SnowSimulation {
         let modes = self.air.modes.clone();
         let wants = |mode: Mode| modes.contains(&mode) && !held;
         let raining = self.air.modes.iter().any(|mode| mode.rainy()) && !held;
-        // Freezing rain glazes the glass with frost too.
-        let glazed = if self.air.asked.contains(&Mode::FreezingRain) && !held { 0.45 } else { 0.0 };
+        // Frost on the glass comes only when asked for.
+        let glazed = 0.0f32;
         let cursor = self.air.cursor;
         let ground = &self.layers[0];
         let floor = |x: f32| ground.surface(ground.clamped_index(x.clamp(0.0, width - 1.0)));

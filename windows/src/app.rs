@@ -471,19 +471,20 @@ fn effective(app: &App, month: u32) -> (u32, Vec<Mode>, f32) {
     }
 }
 
-/// Frost, mist and the moon for now: from the weather outside while following it, else from what falls and the hour.
+/// Mist, the moon and the warm glow for now: from the weather outside while following it, else from what falls and the hour.
 fn atmosphere(app: &App, falling: &[Mode], hour: u32) -> Atmosphere {
     let settings = &app.settings;
     let sky = app.outside.filter(|_| settings.local_weather).map(|(sky, _)| sky);
-    let (frost, mist) = match sky {
-        Some(sky) => sky.glass(),
-        None => (if falling.contains(&Mode::Snow) { 0.6 } else { 0.0 }, if falling.contains(&Mode::Fog) { 0.7 } else { 0.0 }),
+    let mist = match sky {
+        Some(sky) => sky.glass().1,
+        None => if falling.contains(&Mode::Fog) { 0.7 } else { 0.0 },
     };
     let night = sky.map_or(!(6..19).contains(&hour), |sky| !sky.day);
     let clear = sky.is_none_or(|sky| sky.clouds < 80.0) && !falling.iter().any(|mode| mode.rainy() || *mode == Mode::Fog);
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |since| since.as_secs_f64());
     Atmosphere {
-        frost: if settings.frost { frost } else { 0.0 },
+        // No frost flowers: the glass stays clear of ice, at the edges and on windows alike.
+        frost: 0.0,
         mist: if settings.misted { mist } else { 0.0 },
         moon: (settings.moon && night && clear).then(|| moon_phase(now)),
         warmth: if settings.cozy { 1.0 } else { 0.0 },
@@ -1357,10 +1358,6 @@ fn act(action: Action) {
             Action::Screenshots => {
                 settings.show_in_screenshots = !settings.show_in_screenshots;
                 Some(Command::ShowInScreenshots(settings.show_in_screenshots))
-            }
-            Action::Frost => {
-                settings.frost = !settings.frost;
-                None
             }
             Action::Misted => {
                 settings.misted = !settings.misted;

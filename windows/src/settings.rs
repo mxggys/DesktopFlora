@@ -110,7 +110,6 @@ pub enum Action {
     Screenshots,
     FadeWhileTyping,
     CursorTrail,
-    Frost,
     Misted,
     Moon,
     Cozy,
@@ -1238,7 +1237,6 @@ impl Painter<'_> {
         self.card(&t("Frame Rate"), &t("Eco: at most 20 frames a second. Max: always the display's full rate"), Control::Choices(rates, Some(rate), &Action::Rate), left, right, y)?;
 
         self.section(&t("Atmosphere"), left, right, y)?;
-        self.card(&t("Frost Flowers"), &t("Ice crystals grow in from the edges of the screen when it freezes"), Control::Switch(settings.frost, Action::Frost), left, right, y)?;
         self.card(&t("Misted Glass"), &t("The screen mists over in cold, damp weather. A quick swipe of the mouse wipes it clear"), Control::Switch(settings.misted, Action::Misted), left, right, y)?;
         self.card(&t("Moon"), &t("The moon shows at night, in its real phase"), Control::Switch(settings.moon, Action::Moon), left, right, y)?;
         self.card(&t("Cozy Glow"), &t("A warm, brown-red glow over the screen, darker toward the edges"), Control::Switch(settings.cozy, Action::Cozy), left, right, y)?;
